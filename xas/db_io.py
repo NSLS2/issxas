@@ -12,7 +12,7 @@ def load_apb_dataset_from_db(db, uid):
     logger= get_logger()
     hdr = db[uid]
     logger.info(f'({ttime.ctime()}) Retrieving pizzabox data... ')
-    apb_dataset = list(hdr.data(stream_name='apb_stream', field='apb_stream'))[0].copy()
+    apb_dataset = db.v2[uid]['apb_stream']['data']['apb_stream'].read()[0]
     logger.info(f'({ttime.ctime()}) Pizzabox data extracted from DB')
     apb_dataset = pd.DataFrame(apb_dataset,
                                columns=['timestamp', 'i0', 'it', 'ir', 'iff', 'aux1', 'aux2', 'aux3', 'aux4'])
@@ -34,7 +34,7 @@ def load_apb_dataset_from_db(db, uid):
 
     logger.info(f'({ttime.ctime()}) Retrieving encoder data... ')
     # apb_dataset = list(hdr.data(stream_name='apb_stream', field='apb_stream'))[0]
-    energy_dataset =  list(hdr.data(stream_name='pb9_enc1',field='pb9_enc1'))[0].copy()
+    energy_dataset =  db.v2[uid]['pb9_enc1']['data']['pb9_enc1'].read()[0]
     logger.info(f'({ttime.ctime()}) Encoder data received.')
     energy_dataset = pd.DataFrame(energy_dataset,
                                   columns=['ts_s', 'ts_ns', 'encoder', 'index', 'state'])

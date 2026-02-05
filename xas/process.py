@@ -1,66 +1,144 @@
-
 from xas.bin import bin, bin_epics_fly_scan
-from xas.file_io import (load_dataset_from_files, create_file_header, validate_file_exists, validate_path_exists,
-                      save_interpolated_df_as_file, save_binned_df_as_file, find_e0, save_stepscan_as_file,
-                      stepscan_remove_offsets, stepscan_normalize_xs, stepscan_normalize_xia,combine_xspress3_channels, combine_pil100k_channels,
-                      combine_xia_channels,
-                      filter_df_by_valid_keys, save_primary_df_as_file, save_extended_data_as_file, dump_tiff_images)
-from xas.db_io import load_apb_dataset_from_db, translate_apb_dataset, load_apb_trig_dataset_from_db, load_xs3_dataset_from_db, load_pil100k_dataset_from_db, load_apb_dataset_only_from_db, translate_apb_only_dataset, load_xia_dataset_from_db
+from xas.file_io import (
+    load_dataset_from_files,
+    create_file_header,
+    validate_file_exists,
+    validate_path_exists,
+    save_interpolated_df_as_file,
+    save_binned_df_as_file,
+    find_e0,
+    save_stepscan_as_file,
+    stepscan_remove_offsets,
+    stepscan_normalize_xs,
+    stepscan_normalize_xia,
+    combine_xspress3_channels,
+    combine_pil100k_channels,
+    combine_xia_channels,
+    filter_df_by_valid_keys,
+    save_primary_df_as_file,
+    save_extended_data_as_file,
+    dump_tiff_images,
+)
+from xas.db_io import (
+    load_apb_dataset_from_db,
+    translate_apb_dataset,
+    load_apb_trig_dataset_from_db,
+    load_xs3_dataset_from_db,
+    load_pil100k_dataset_from_db,
+    load_apb_dataset_only_from_db,
+    translate_apb_only_dataset,
+    load_xia_dataset_from_db,
+)
 from xas.interpolate import interpolate, interpolate_with_interp
 from scipy.interpolate import interp1d
 import pandas as pd
 from xas.file_io import _shift_root
 from xas.db_io import update_header_start
+from xas.metadata import generate_xdi_metadata_from_hdr
 from xas.xas_logger import get_logger
+
 # import matplotlib.pyplot as plt
 # import numpy as np
 import time as ttime
 import os
+
 # from isscloudtools.slack import slack_upload_image
 # from isscloudtools.cloud_dispatcher import generate_output_figures
 
-from xas.spectrometer import convert_roll_to_energy_for_johann_fly_scan, filter_johann_image_kwargs, \
-    filter_johann_calibration_kwargs, interpolate_df_emission_energies_on_common_grid
+from xas.spectrometer import (
+    convert_roll_to_energy_for_johann_fly_scan,
+    filter_johann_image_kwargs,
+    filter_johann_calibration_kwargs,
+    interpolate_df_emission_energies_on_common_grid,
+)
 from xas.image_analysis import reduce_johann_images
-from xas.vonhamos import process_von_hamos_scan, filter_von_hamos_kwargs #, save_vh_scan_to_file
+from xas.vonhamos import (
+    process_von_hamos_scan,
+    filter_von_hamos_kwargs,
+)  # , save_vh_scan_to_file
 import gc
 
-def process_interpolate_bin(doc, db, processing_repo='xas', draw_func_interp = None, draw_func_bin = None, cloud_dispatcher = None,
-                            print_func=None, dump_to_tiff=False, load_images=False, processing_kwargs=None,
-                            save_image = False, camera1 = None, camera2 = None):
-    logger = get_logger()
-    logger.info(f'({ttime.ctime()}) Processing has begun -----------------------------------------------')
+from tiled.client import from_uri
 
-    if 'experiment' in db[doc['run_start']].start.keys():
-        uid = doc['run_start']
+client = from_uri("https://tiled.nsls2.bnl.gov")['iss/sandbox']
+
+
+def process_interpolate_bin(
+    doc,
+    db,
+    processing_repo="xas",
+    draw_func_interp=None,
+    draw_func_bin=None,
+    cloud_dispatcher=None,
+    print_func=None,
+    dump_to_tiff=False,
+    load_images=False,
+    processing_kwargs=None,
+    save_image=False,
+    camera1=None,
+    camera2=None,
+):
+    logger = get_logger()
+    logger.info(
+        f"({ttime.ctime()}) Processing has begun -----------------------------------------------"
+    )
+
+    if "experiment" in db[doc["run_start"]].start.keys():
+        uid = doc["run_start"]
         print(f"processing {uid} in using repo {processing_repo}")
-        if processing_repo == 'xas':
-            process_interpolate_bin_from_uid(uid, db, draw_func_interp=draw_func_interp, draw_func_bin=draw_func_bin,
-                                             cloud_dispatcher=cloud_dispatcher, print_func=print_func,
-                                             dump_to_tiff=dump_to_tiff, load_images=load_images,
-                                             save_image = save_image, camera1= camera1,camera2=camera2,
-                                             processing_kwargs=processing_kwargs)
-    logger.info(f'({ttime.ctime()}) Processing has finished -----------------------------------------------')
+        if processing_repo == "xas":
+            process_interpolate_bin_from_uid(
+                uid,
+                db,
+                draw_func_interp=draw_func_interp,
+                draw_func_bin=draw_func_bin,
+                cloud_dispatcher=cloud_dispatcher,
+                print_func=print_func,
+                dump_to_tiff=dump_to_tiff,
+                load_images=load_images,
+                save_image=save_image,
+                camera1=camera1,
+                camera2=camera2,
+                processing_kwargs=processing_kwargs,
+            )
+    logger.info(
+        f"({ttime.ctime()}) Processing has finished -----------------------------------------------"
+    )
 
 
-
-def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func_bin = None, cloud_dispatcher = None,
-                                     print_func=None, dump_to_tiff=False, load_images=False,
-                                     save_interpolated_file=True, update_start=None,
-                                     save_image = False, camera1=None,       camera2=None,
-                                     processing_kwargs=None):
+def process_interpolate_bin_from_uid(
+    uid,
+    db,
+    draw_func_interp=None,
+    draw_func_bin=None,
+    cloud_dispatcher=None,
+    print_func=None,
+    dump_to_tiff=False,
+    load_images=False,
+    save_interpolated_file=True,
+    update_start=None,
+    save_image=False,
+    camera1=None,
+    camera2=None,
+    processing_kwargs=None,
+):
 
     logger = get_logger()
-    hdr, primary_df, extended_data, comments, path_to_file, file_list, data_kind = get_processed_df_from_uid(uid, db,
-                                                                          logger=logger,
-                                                                          draw_func_interp=draw_func_interp,
-                                                                          draw_func_bin=draw_func_bin,
-                                                                          print_func=print_func,
-                                                                          save_interpolated_file=save_interpolated_file,
-                                                                          update_start=update_start,
-                                                                          load_images=load_images,
-                                                                          processing_kwargs=processing_kwargs)
-    #save images
+    hdr, primary_df, extended_data, comments, path_to_file, file_list, data_kind = (
+        get_processed_df_from_uid(
+            uid,
+            db,
+            logger=logger,
+            draw_func_interp=draw_func_interp,
+            draw_func_bin=draw_func_bin,
+            print_func=print_func,
+            save_interpolated_file=save_interpolated_file,
+            update_start=update_start,
+            load_images=load_images,
+            processing_kwargs=processing_kwargs,
+        )
+    )
+    # save images
     if save_image:
         try:
             base, ext = os.path.splitext(path_to_file)
@@ -68,12 +146,14 @@ def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func
                 camera1.saveImageAsFile(f"{base}_camera1.jpg")
             if camera2:
                 camera2.saveImageAsFile(f"{base}_camera2.jpg")
-            logger.info(f'({ttime.ctime()}) Sample images are saved for {path_to_file}')
+            logger.info(f"({ttime.ctime()}) Sample images are saved for {path_to_file}")
         except:
-            logger.info(f'({ttime.ctime()}) Saving sample images failed for {path_to_file}')
+            logger.info(
+                f"({ttime.ctime()}) Saving sample images failed for {path_to_file}"
+            )
 
-    if (processing_kwargs is not None) and ('skip_standard_dat' in processing_kwargs):
-        skip_standard_dat = processing_kwargs['skip_standard_dat']
+    if (processing_kwargs is not None) and ("skip_standard_dat" in processing_kwargs):
+        skip_standard_dat = processing_kwargs["skip_standard_dat"]
     else:
         skip_standard_dat = False
 
@@ -82,108 +162,147 @@ def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func
 
     try:
         dictionary_for_hdf5_file = {**dict(primary_df), **extended_data}
-        save_extended_data_as_file(path_to_file, dictionary_for_hdf5_file, data_kind=data_kind, metadata_dict=dict(hdr.start))
+        save_extended_data_as_file(
+            path_to_file,
+            dictionary_for_hdf5_file,
+            data_kind=data_kind,
+            metadata_dict=dict(hdr.start),
+        )
         # save_extended_data_as_file(path_to_file, extended_data, data_kind=data_kind)
-    except Exception  as e:
+    except Exception as e:
         print(e)
         pass
 
     if dump_to_tiff:
         if extended_data is not None:
             tiff_files = dump_tiff_images(path_to_file, primary_df, extended_data)
-            print(f' >>>>>>>>>>Tiff file {tiff_files}')
+            print(f" >>>>>>>>>>Tiff file {tiff_files}")
             file_list += tiff_files
-
 
     # dfgd
     try:
         if cloud_dispatcher is not None:
             # year, cycle, proposal = hdr.start['year'], hdr.start['cycle'], hdr.start['PROPOSAL']
-            year, cycle, proposal = hdr.start['year'], hdr.start['cycle'], hdr.start['proposal']
+            year, cycle, proposal = (
+                hdr.start["year"],
+                hdr.start["cycle"],
+                hdr.start["proposal"],
+            )
             for f in file_list:
-                cloud_dispatcher.load_to_dropbox(f, year=year, cycle=cycle, proposal=proposal)
-                logger.info(f'({ttime.ctime()}) Sending data to the cloud successful for {path_to_file}')
+                cloud_dispatcher.load_to_dropbox(
+                    f, year=year, cycle=cycle, proposal=proposal
+                )
+                logger.info(
+                    f"({ttime.ctime()}) Sending data to the cloud successful for {path_to_file}"
+                )
     except Exception as e:
-        logger.info(f'({ttime.ctime()}) Sending data to the cloud failed for {path_to_file}')
+        logger.info(
+            f"({ttime.ctime()}) Sending data to the cloud failed for {path_to_file}"
+        )
         # raise e
 
 
-
- #   clear_db_cache(db)
-
+#   clear_db_cache(db)
 
 
-_legacy_experiment_reg = {'fly_energy_scan_pil100k' : 'fly_scan'}
+_legacy_experiment_reg = {"fly_energy_scan_pil100k": "fly_scan"}
 
-def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_func_bin = None,
-                              print_func=None, save_interpolated_file=True,
-                              update_start=None, return_processed_df=False, load_images=False, processing_kwargs=None):
+
+def get_processed_df_from_uid(
+    uid,
+    db,
+    logger=None,
+    draw_func_interp=None,
+    draw_func_bin=None,
+    print_func=None,
+    save_interpolated_file=True,
+    update_start=None,
+    return_processed_df=False,
+    load_images=False,
+    processing_kwargs=None,
+):
 
     if print_func is None:
         print_func = print
     if logger is None:
         logger = get_logger()
 
-        # logger = get_logger(print_func=print_func)
+    # logger = get_logger(print_func=print_func)
     hdr = db[uid]
     if update_start is not None:
         hdr = update_header_start(hdr, update_start)
-    experiment = hdr.start['experiment']
-    if experiment in _legacy_experiment_reg.keys(): experiment = _legacy_experiment_reg[experiment]
+    experiment = hdr.start["experiment"]
+    if experiment in _legacy_experiment_reg.keys():
+        experiment = _legacy_experiment_reg[experiment]
     comments = create_file_header(hdr)
-    if (processing_kwargs is not None) and ('interp_filename' in processing_kwargs):
-        path_to_file = processing_kwargs['interp_filename']
+    if (processing_kwargs is not None) and ("interp_filename" in processing_kwargs):
+        path_to_file = processing_kwargs["interp_filename"]
     else:
-        path_to_file = hdr.start['interp_filename']
-    path_to_file = _shift_root(path_to_file)
-    validate_path_exists(path_to_file)
-    path_to_file = validate_file_exists(path_to_file, file_type='interp')
+        path_to_file = hdr.start["interp_filename"]
+    # path_to_file = _shift_root(path_to_file)
+    # validate_path_exists(path_to_file)
+    # path_to_file = validate_file_exists(path_to_file, file_type='interp')
     e0 = find_e0(hdr)
-    data_kind = 'default'
+    data_kind = "default"
     file_list = []
-    logger.info(f'({ttime.ctime()}) Processing started for {uid}/{path_to_file}')
-    if experiment == 'fly_scan':
-        logger.info(f'({ttime.ctime()}) Processing fly scan')
+    logger.info(f"({ttime.ctime()}) Processing started for {uid}")
+    if experiment == "fly_scan":
+        logger.info(f"({ttime.ctime()}) Processing fly scan")
         stream_names = hdr.stream_names
         try:
             # default detectors
             apb_df, energy_df, energy_offset = load_apb_dataset_from_db(db, uid)
             raw_dict = translate_apb_dataset(apb_df, energy_df, energy_offset)
-            logger.info(f'({ttime.ctime()}) Pizzabox and monochromator data processed')
+            logger.info(f"({ttime.ctime()}) Pizzabox and monochromator data processed")
             for stream_name in stream_names:
-                if (stream_name == 'pil100k_stream') or (stream_name == 'pil100k2_stream'):
-                    logger.info(f'({ttime.ctime()}) Retrieving trigger data...')
+                if (stream_name == "pil100k_stream") or (
+                    stream_name == "pil100k2_stream"
+                ):
+                    logger.info(f"({ttime.ctime()}) Retrieving trigger data...")
                     pil100k_stream_name = stream_name
-                    pil100k_name = stream_name.split('_')[0]
-                    apb_trigger_stream_name = f'apb_trigger_{pil100k_name}'
+                    pil100k_name = stream_name.split("_")[0]
+                    apb_trigger_stream_name = f"apb_trigger_{pil100k_name}"
 
-                    apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(db, uid, use_fall=True,
-                                                                                   stream_name=apb_trigger_stream_name)
-                    logger.info(f'({ttime.ctime()}) Trigger data received')
-                    logger.info(f'({ttime.ctime()}) Retrieving Pilatus data...')
-                    pil100k_dict = load_pil100k_dataset_from_db(db, uid, apb_trigger_pil100k_timestamps,
-                                                                pil100k_stream_name=pil100k_stream_name,
-                                                                load_images=load_images)
-                    logger.info(f'({ttime.ctime()}) Pilatus data received')
+                    apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(
+                        db, uid, use_fall=True, stream_name=apb_trigger_stream_name
+                    )
+                    logger.info(f"({ttime.ctime()}) Trigger data received")
+                    logger.info(f"({ttime.ctime()}) Retrieving Pilatus data...")
+                    pil100k_dict = load_pil100k_dataset_from_db(
+                        db,
+                        uid,
+                        apb_trigger_pil100k_timestamps,
+                        pil100k_stream_name=pil100k_stream_name,
+                        load_images=load_images,
+                    )
+                    logger.info(f"({ttime.ctime()}) Pilatus data received")
                     raw_dict = {**raw_dict, **pil100k_dict}
 
-                elif stream_name == 'xs_stream':
-                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs')
-                    xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps)
-                    logger.info(f'({ttime.ctime()}) SDD data received')
+                elif stream_name == "xs_stream":
+                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(
+                        db, uid, stream_name="apb_trigger_xs"
+                    )
+                    xs3_dict = load_xs3_dataset_from_db(
+                        db, uid, apb_trigger_xs_timestamps
+                    )
+                    logger.info(f"({ttime.ctime()}) SDD data received")
                     raw_dict = {**raw_dict, **xs3_dict}
-                elif stream_name == 'ge_detector_stream':
-                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_ge_detector')
-                    xia_dict = load_xia_dataset_from_db(db, uid, apb_trigger_xia_timestamps)
-                    logger.info(f'({ttime.ctime()}) XIA data received')
+                elif stream_name == "ge_detector_stream":
+                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(
+                        db, uid, stream_name="apb_trigger_ge_detector"
+                    )
+                    xia_dict = load_xia_dataset_from_db(
+                        db, uid, apb_trigger_xia_timestamps
+                    )
+                    logger.info(f"({ttime.ctime()}) XIA data received")
                     raw_dict = {**raw_dict, **xia_dict}
-                    pass #WIP for flying Ge detrctor
+                    pass  # WIP for flying Ge detector
 
-            logger.info(f'({ttime.ctime()}) Streams loaded successfully')
+            logger.info(f"({ttime.ctime()}) Streams loaded successfully")
         except Exception as e:
-            logger.info(f'({ttime.ctime()}) Loading streams failed')
+            logger.info(f"({ttime.ctime()}) Loading streams failed")
             raise e
-        #raise RuntimeError()
+        # raise RuntimeError()
         try:
             # print(raw_dict)
             if load_images:
@@ -191,11 +310,15 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
             else:
                 interpolated_df = interpolate(raw_dict)
 
-            logger.info(f'({ttime.ctime()}) Interpolation successful for {path_to_file}')
+            logger.info(f"({ttime.ctime()}) Interpolation successful for {uid}")
             if save_interpolated_file:
-                save_interpolated_df_as_file(path_to_file, interpolated_df, comments)
+                client.write_table(
+                    interpolated_df,
+                    metadata=generate_xdi_metadata_from_hdr(hdr),
+                    access_tags=[hdr.start["proposal"]],
+                )
         except Exception as e:
-            logger.info(f'({ttime.ctime()}) Interpolation failed for {path_to_file}')
+            logger.info(f"({ttime.ctime()}) Interpolation failed for {uid}")
             raise e
 
         try:
@@ -203,37 +326,41 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
                 # rebin_kwargs = filter_rebin_kwargs(processing_kwargs)
                 rebin_kwargs = {}
                 processed_df = bin(interpolated_df, e0, **rebin_kwargs)
-                (path, extension) = os.path.splitext(path_to_file)
-                path_to_file = path + '.dat'
-                logger.info(f'({ttime.ctime()}) Binning successful for {path_to_file}')
+                (path, extension) = os.path.splitext(uid)
+                path_to_file = path + ".dat"
+                logger.info(f"({ttime.ctime()}) Binning successful for {uid}")
 
                 if draw_func_interp is not None:
                     draw_func_interp(interpolated_df, processed_df)
                 if draw_func_bin is not None:
                     draw_func_bin(processed_df, path_to_file)
             else:
-                print(f'({ttime.ctime()}) Energy E0 is not defined')
+                print(f"({ttime.ctime()}) Energy E0 is not defined")
         except Exception as e:
-            logger.info(f'({ttime.ctime()}) Binning failed for {path_to_file}')
+            logger.info(f"({ttime.ctime()}) Binning failed for {path_to_file}")
             raise e
 
         # save_binned_df_as_file(path_to_file, processed_df, comments)
 
-
-    elif (experiment == 'step_scan') or (experiment == 'collect_n_exposures'):
-        logger.info(f'({ttime.ctime()}) Processing step scan')
+    elif (experiment == "step_scan") or (experiment == "collect_n_exposures"):
+        logger.info(f"({ttime.ctime()}) Processing step scan")
         # path_to_file = validate_file_exists(path_to_file, file_type='interp')
         df = stepscan_remove_offsets(hdr)
         df = stepscan_normalize_xs(df)
         df = stepscan_normalize_xia(df)
         processed_df = filter_df_by_valid_keys(df)
 
-    elif experiment == 'epics_fly_scan':
-        logger.info(f'({ttime.ctime()}) Processing EPICS fly scan')
-        processed_df = get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file=True,
-                                                                    path_to_file=path_to_file,
-                                                                    comments=comments, load_images=load_images,
-                                                                    processing_kwargs=processing_kwargs)
+    elif experiment == "epics_fly_scan":
+        logger.info(f"({ttime.ctime()}) Processing EPICS fly scan")
+        processed_df = get_processed_df_from_uid_for_epics_fly_scan(
+            db,
+            uid,
+            save_interpolated_file=True,
+            path_to_file=path_to_file,
+            comments=comments,
+            load_images=load_images,
+            processing_kwargs=processing_kwargs,
+        )
     else:
         return
 
@@ -247,16 +374,23 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     primary_df, extended_data = split_df_data_into_primary_and_extended(processed_df)
 
     ### WIP
-    if 'spectrometer' in hdr.start.keys():
-        if hdr.start['spectrometer'] == 'von_hamos':
+    if "spectrometer" in hdr.start.keys():
+        if hdr.start["spectrometer"] == "von_hamos":
             von_hamos_kwargs = filter_von_hamos_kwargs(processing_kwargs)
-            extended_data, comments, file_paths = process_von_hamos_scan(primary_df, extended_data, comments, hdr,
-                                                                         path_to_file, db=db, **von_hamos_kwargs)
-            data_kind = 'von_hamos'
+            extended_data, comments, file_paths = process_von_hamos_scan(
+                primary_df,
+                extended_data,
+                comments,
+                hdr,
+                path_to_file,
+                db=db,
+                **von_hamos_kwargs,
+            )
+            data_kind = "von_hamos"
             file_list = file_paths
             # save_vh_scan_to_file(path_to_file, vh_scan, comments)
-    if (processing_kwargs is not None) and ('skip_standard_dat' in processing_kwargs):
-        skip_standard_dat = processing_kwargs['skip_standard_dat']
+    if (processing_kwargs is not None) and ("skip_standard_dat" in processing_kwargs):
+        skip_standard_dat = processing_kwargs["skip_standard_dat"]
     else:
         skip_standard_dat = False
 
@@ -264,7 +398,10 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
         file_list.append(path_to_file)
     return hdr, primary_df, extended_data, comments, path_to_file, file_list, data_kind
 
+
 import numpy as np
+
+
 def split_df_data_into_primary_and_extended(df_orig):
     sec_cols = []
     for c in df_orig.columns:
@@ -289,39 +426,44 @@ def clear_db_cache(db):
     gc.collect()
 
 
-
 def process_interpolate_only(doc, db):
-    if 'experiment' in db[doc['run_start']].start.keys():
-        if db[doc['run_start']].start['experiment'] == 'fly_energy_scan':
-            raw_df = load_dataset_from_files(db, doc['run_start'])
+    if "experiment" in db[doc["run_start"]].start.keys():
+        if db[doc["run_start"]].start["experiment"] == "fly_energy_scan":
+            raw_df = load_dataset_from_files(db, doc["run_start"])
             interpolated_df = interpolate(raw_df)
             return interpolated_df
 
 
 def process_interpolate_unsorted(uid, db):
-     raw_df = load_dataset_from_files(db, uid)
-     interpolated_df = interpolate(raw_df, sort=False)
-     return interpolated_df
+    raw_df = load_dataset_from_files(db, uid)
+    interpolated_df = interpolate(raw_df, sort=False)
+    return interpolated_df
+
 
 def clean_dict(raw_dict):
     clean_raw_dict = {}
     for key in raw_dict.keys():
         df = raw_dict[key]
-        zero_idx = df[df['timestamp'] == 0].index.min()
+        zero_idx = df[df["timestamp"] == 0].index.min()
         if zero_idx is None:
             clean_raw_dict[key] = df
         else:
-            clean_raw_dict[key] = df.loc[:zero_idx - 1]
+            clean_raw_dict[key] = df.loc[: zero_idx - 1]
     return clean_raw_dict
 
 
-
-def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file=False, path_to_file=None,
-                                                 comments=None, load_images=False, processing_kwargs=None):
+def get_processed_df_from_uid_for_epics_fly_scan(
+    db,
+    uid,
+    save_interpolated_file=False,
+    path_to_file=None,
+    comments=None,
+    load_images=False,
+    processing_kwargs=None,
+):
     hdr = db[uid]
     stream_names = hdr.stream_names
     logger = get_logger()
-
     # if (hdr.start['spectrometer'] == 'johann'):
     #     load_images = True
 
@@ -332,49 +474,69 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
         raw_dict = {}
 
         for stream_name in stream_names:
-            if stream_name == 'apb_stream':
+            if stream_name == "apb_stream":
                 apb_df = load_apb_dataset_only_from_db(db, uid)
                 raw_dict = {**raw_dict, **translate_apb_only_dataset(apb_df)}
 
-            elif (stream_name == 'pil100k_stream') or (stream_name == 'pil100k2_stream'):
-                  pil100k_stream_name = stream_name
-                  pil100k_name = stream_name.split('_')[0]
-                  apb_trigger_stream_name = f'apb_trigger_{pil100k_name}'
-                  logger.info(f'({ttime.ctime()}) Retrieving trigger data...')
-                  apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(db, uid, use_fall=True,
-                                                                                 stream_name=apb_trigger_stream_name)
-                  logger.info(f'({ttime.ctime()}) Trigger data received')
-                  logger.info(f'({ttime.ctime()}) Retrieving Pilatus data...')
-                  pil100k_dict = load_pil100k_dataset_from_db(db, uid, apb_trigger_pil100k_timestamps,
-                                                              pil100k_stream_name=pil100k_stream_name,
-                                                              load_images=load_images)
-                  logger.info(f'({ttime.ctime()}) Pilatus data received')
-                  raw_dict = {**raw_dict, **pil100k_dict}
+            elif (stream_name == "pil100k_stream") or (
+                stream_name == "pil100k2_stream"
+            ):
+                pil100k_stream_name = stream_name
+                pil100k_name = stream_name.split("_")[0]
+                apb_trigger_stream_name = f"apb_trigger_{pil100k_name}"
+                logger.info(f"({ttime.ctime()}) Retrieving trigger data...")
+                apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(
+                    db, uid, use_fall=True, stream_name=apb_trigger_stream_name
+                )
+                logger.info(f"({ttime.ctime()}) Trigger data received")
+                logger.info(f"({ttime.ctime()}) Retrieving Pilatus data...")
+                pil100k_dict = load_pil100k_dataset_from_db(
+                    db,
+                    uid,
+                    apb_trigger_pil100k_timestamps,
+                    pil100k_stream_name=pil100k_stream_name,
+                    load_images=load_images,
+                )
+                logger.info(f"({ttime.ctime()}) Pilatus data received")
+                raw_dict = {**raw_dict, **pil100k_dict}
 
-            elif stream_name == 'xs_stream':
-                apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs')
-                logger.info(f'({ttime.ctime()}) Retrieving SDD data...')
+            elif stream_name == "xs_stream":
+                apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(
+                    db, uid, stream_name="apb_trigger_xs"
+                )
+                logger.info(f"({ttime.ctime()}) Retrieving SDD data...")
                 xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps)
-                logger.info(f'({ttime.ctime()}) SDD data received')
+                logger.info(f"({ttime.ctime()}) SDD data received")
                 raw_dict = {**raw_dict, **xs3_dict}
 
-            elif stream_name.endswith('monitor'):
-                _stream_name = stream_name[:stream_name.index('monitor')-1]
-                logger.info(f'({ttime.ctime()}) Retrieving monitor data...')
+            elif stream_name.endswith("monitor"):
+                _stream_name = stream_name[: stream_name.index("monitor") - 1]
+                logger.info(f"({ttime.ctime()}) Retrieving monitor data...")
                 df = hdr.table(stream_name)
-                logger.info(f'({ttime.ctime()}) Monitor data received')
-                df['timestamp'] = (df.time.values - np.datetime64('1970-01-01T00:00:00Z')) / np.timedelta64(1, 's')
+                logger.info(f"({ttime.ctime()}) Monitor data received")
+                df["timestamp"] = (
+                    df.time.values - np.datetime64("1970-01-01T00:00:00Z")
+                ) / np.timedelta64(1, "s")
 
-                interpolator_func = interp1d(df['timestamp'].values, df[_stream_name].values, axis=0, kind='quadratic')
-                fine_timestamp = np.linspace(df['timestamp'].min(), df['timestamp'].max(), int((df['timestamp'].max() - df['timestamp'].min()) * 500))
+                interpolator_func = interp1d(
+                    df["timestamp"].values,
+                    df[_stream_name].values,
+                    axis=0,
+                    kind="quadratic",
+                )
+                fine_timestamp = np.linspace(
+                    df["timestamp"].min(),
+                    df["timestamp"].max(),
+                    int((df["timestamp"].max() - df["timestamp"].min()) * 500),
+                )
                 motor_pos_fine = interpolator_func(fine_timestamp)
 
-
-
-                monitor_dict = {_stream_name : pd.DataFrame({'timestamp': fine_timestamp,
-                                                               _stream_name: motor_pos_fine})}
+                monitor_dict = {
+                    _stream_name: pd.DataFrame(
+                        {"timestamp": fine_timestamp, _stream_name: motor_pos_fine}
+                    )
+                }
                 raw_dict = {**raw_dict, **monitor_dict}
-
 
         # logger.info(f'({ttime.ctime()}) Loading file successful for UID {uid}')
     except Exception as e:
@@ -384,38 +546,55 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
         raw_dict = clean_dict(raw_dict)
         interpolated_df = interpolate(raw_dict, sort=False)
         if save_interpolated_file:
-            save_interpolated_df_as_file(path_to_file, interpolated_df, comments)
+            # save_interpolated_df_as_file(path_to_file, interpolated_df, comments)
+            client.write_table(
+                interpolated_df, metadata=generate_xdi_metadata_from_hdr(hdr)
+            )
         # logger.info(f'({ttime.ctime()}) Interpolation successful for {uid}')
     except Exception as e:
         # logger.info(f'({ttime.ctime()}) Interpolation failed for {uid}')
         raise e
-    if 'spectrometer' in hdr.start:
-        if 'roi_polygon' in hdr.start['detectors']['Pilatus 100k New']['config']:
-        # if 'roi_polygon' in hdr.start['detectors']['Pilatus 100k']['config']:
+    if "spectrometer" in hdr.start:
+        if "roi_polygon" in hdr.start["detectors"]["Pilatus 100k New"]["config"]:
+            # if 'roi_polygon' in hdr.start['detectors']['Pilatus 100k']['config']:
             # johann_image_kwargs = filter_johann_image_kwargs(processing_kwargs)
             # if (hdr.start['spectrometer'] == 'johann') and (load_images):
             #     interpolated_df = reduce_johann_images(interpolated_df, hdr, **johann_image_kwargs)
 
-            johann_calibration_kwargs = filter_johann_calibration_kwargs(processing_kwargs)
-            if (hdr.start['spectrometer'] == 'johann') and (load_images):
-                interpolated_df, energy_key = convert_roll_to_energy_for_johann_fly_scan(interpolated_df, hdr, **johann_calibration_kwargs)
+            johann_calibration_kwargs = filter_johann_calibration_kwargs(
+                processing_kwargs
+            )
+            if (hdr.start["spectrometer"] == "johann") and (load_images):
+                interpolated_df, energy_key = (
+                    convert_roll_to_energy_for_johann_fly_scan(
+                        interpolated_df, hdr, **johann_calibration_kwargs
+                    )
+                )
                 # return interpolated_df
                 if energy_key is not None:
-                    interpolated_df = interpolate_df_emission_energies_on_common_grid(interpolated_df, hdr, energy_key=energy_key)
-                    step_size = 0.2 # eV
-                    processed_df = bin_epics_fly_scan(interpolated_df, key_base='energy', step_size=step_size)
+                    interpolated_df = interpolate_df_emission_energies_on_common_grid(
+                        interpolated_df, hdr, energy_key=energy_key
+                    )
+                    step_size = 0.2  # eV
+                    processed_df = bin_epics_fly_scan(
+                        interpolated_df, key_base="energy", step_size=step_size
+                    )
                     return processed_df
     try:
-        stream_name = hdr.start['motor_stream_names'][0]
-        _stream_name = stream_name[:stream_name.index('monitor') - 1]
-        if ('johann' in _stream_name) and (('roll' in _stream_name) or ('yaw' in _stream_name)):
+        stream_name = hdr.start["motor_stream_names"][0]
+        _stream_name = stream_name[: stream_name.index("monitor") - 1]
+        if ("johann" in _stream_name) and (
+            ("roll" in _stream_name) or ("yaw" in _stream_name)
+        ):
             step_size = 5
         else:
             step_size = 0.1
-        processed_df = bin_epics_fly_scan(interpolated_df, key_base=_stream_name, step_size=step_size)
+        processed_df = bin_epics_fly_scan(
+            interpolated_df, key_base=_stream_name, step_size=step_size
+        )
         # (path, extension) = os.path.splitext(path_to_file)
         # path_to_file = path + '.dat'
-        logger.info(f'({ttime.ctime()}) Binning successful')
+        logger.info(f"({ttime.ctime()}) Binning successful")
 
         # if draw_func_interp is not None:
         #     draw_func_interp(interpolated_df)
@@ -423,12 +602,10 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
         #     draw_func_bin(processed_df, path_to_file)
 
     except Exception as e:
-        logger.info(f'({ttime.ctime()}) Binning failed')
+        logger.info(f"({ttime.ctime()}) Binning failed")
         raise e
 
     return processed_df
-
-
 
 
 # ###########################################################

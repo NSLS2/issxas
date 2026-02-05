@@ -2,9 +2,10 @@ import copy
 
 from tiled.client import from_uri, from_profile
 from tiled.client.node import Node
-from tiled.queries import Key
+from tiled.queries import Key, Contains
 from tiled.client.cache import Cache
 
+from pathlib import Path
 import pandas as pd
 
 from collections import UserDict, namedtuple
@@ -13,6 +14,7 @@ import itertools
 from xas.xdash_math import LarchCalculator, calc_mus
 import uuid
 
+client = from_uri("https://tiled.nsls2.bnl.gov")['iss/sandbox']
 
 _LABEL_DICT = {'mu': 'mu',
                'normalized': 'mu norm',
@@ -269,3 +271,20 @@ def get_unique_value_combinations(node, keys, add_nodes=False):
 def build_scan_tree_table(node: Node, grouping_keys: list[str]):
     table_rows = get_unique_value_combinations(node, grouping_keys, add_nodes=True)
     return pd.DataFrame(table_rows)
+
+def load_interpolated_df_from_tiled(filename):
+    ''' Load interp tiled and return'''
+
+    # Validate pathlib and extract filename, proposal dir etc.
+    filename = Path(filename).name
+
+    search = client.search(Contains("interp_filename", filename))
+    # Handle exception search result container is empty
+    if len(search.items()) == 0:
+        raise ValueError(f"No records containing filename {filename} found in tiled.")
+    tile = search.values().last()
+    header = tile.metadata
+    df = tile.read()
+    if 'energy' in [i.lower() for i in df.columns]:
+        df = df.sort_values('energy'.lower())
+    return df, header

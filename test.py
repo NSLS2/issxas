@@ -1,6 +1,8 @@
 from tiled.client import from_uri
 from databroker import Broker
-from xas.process import process_interpolate_bin_from_uid
+
+# from xas.process import process_interpolate_bin_from_uid
+from xas.tiled_io import load_interpolated_df_from_tiled
 
 
 # test uid provided by Jorge on January 14
@@ -16,8 +18,15 @@ db = Broker(iss_raw)
 
 
 def test():
-    "Load raw data, align columns by interpolating and binning, and save the result."
-    process_interpolate_bin_from_uid(uid, db)
+    # TEST WRITING
+    # "Load raw data, align columns by interpolating and binning, and save the result."
+    # process_interpolate_bin_from_uid(uid, db)
+
+    # TEST READING
+    "Read the processed data back from tiled with the method isstools uses"
+    (a, b) = load_interpolated_df_from_tiled("foil Se-K 0001-r0002.raw")
+    print(a)
+    print(b)
 
 
 if __name__ == "__main__":
