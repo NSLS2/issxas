@@ -132,7 +132,8 @@ def crystal_temp_factor(crystal, bragg_deg, energy_ev):
 def crystal_reflectivity(crystal, hkl, bragg_deg, energy_ev):
     TF = crystal_temp_factor(crystal, bragg_deg, energy_ev)
     dw = xraydb.darwin_width(energy_ev, crystal, hkl, polarization='u')
-    return TF * np.trapz(dw.intensity, dw.dtheta*1e6)
+    return TF * np.trapezoid(dw.intensity, dw.dtheta*1e6)
+    # return TF * np.trapz(dw.intensity, dw.dtheta*1e6)
 
 # vvv = []
 # args = ('Si', [6, 10, 12], 82.19, 19279); bla = crystal_reflectivity(*args); vvv.append(args + (bla, 0.6857 ))
