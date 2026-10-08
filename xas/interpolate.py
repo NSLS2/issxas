@@ -1,132 +1,140 @@
+"""Align scalar and detector streams to their shared timestamp range."""
+
+import time as ttime
+
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
+
 from xas.xas_logger import get_logger
-import time as ttime
 
 
-
-def interpolate(dataset, key_base = None, sort=True):
-    logger = get_logger()
-
-    interpolated_dataset = {}
-    min_timestamp = max([dataset.get(key).iloc[0, 0] for key in dataset])
-    max_timestamp = min([dataset.get(key).iloc[len(dataset.get(key)) - 1, 0] for key in
-                         dataset if len(dataset.get(key).iloc[:, 0]) > 5])
+def _base_timestamps(dataset, key_base):
+    if not dataset or any(frame.empty for frame in dataset.values()):
+        raise ValueError("Interpolation requires non-empty streams")
+    min_timestamp = max(frame.iloc[0, 0] for frame in dataset.values())
+    # Short trigger streams historically do not constrain the upper bound.
+    end_times = [frame.iloc[-1, 0] for frame in dataset.values() if len(frame) > 5]
+    if not end_times:
+        end_times = [frame.iloc[-1, 0] for frame in dataset.values()]
+    max_timestamp = min(end_times)
     if key_base is None:
-        all_keys = []
-        time_step = []
-        for key in dataset.keys():
-            all_keys.append(key)
-            # time_step.append(np.mean(np.diff(dataset[key].timestamp)))
-            time_step.append(np.median(np.diff(dataset[key].timestamp)))
-        key_base = all_keys[np.argmax(time_step)]
-    timestamps = dataset[key_base].iloc[:,0]
+        key_base = max(dataset, key=lambda key: np.median(np.diff(dataset[key].timestamp)))
+    timestamps = dataset[key_base].iloc[:, 0].to_numpy()
+    timestamps = timestamps[(timestamps >= min_timestamp) & (timestamps <= max_timestamp)]
+    # Preserve the historical exclusion of the last overlapping base sample.
+    timestamps = timestamps[:-1]
+    if not timestamps.size:
+        raise ValueError("Streams have too few overlapping timestamps to interpolate")
+    return timestamps
 
-    condition = timestamps < min_timestamp
-    timestamps = timestamps[np.sum(condition):]
 
-    condition = timestamps > max_timestamp
-    timestamps = timestamps[: (len(timestamps) - np.sum(condition) - 1)]
+def _stream_values(frame):
+    values = frame.iloc[:, 1].to_numpy()
+    if values.dtype == object:
+        values = np.stack(values)
+    return values
 
-    interpolated_dataset['timestamp'] = timestamps.values
 
-    for key in dataset.keys():
+def _chunk_means(values, count):
+    """Vectorize array_split means using its two possible chunk lengths.
+
+    Retaining NumPy's mean reduction avoids changing rounding of epoch-scale
+    timestamps, where even small absolute differences affect interpolation.
+    """
+    size, remainder = divmod(len(values), count)
+    split = remainder * (size + 1)
+    shape = values.shape[1:]
+    groups = []
+    if remainder:
+        groups.append(values[:split].reshape((remainder, size + 1) + shape).mean(axis=1))
+    if count > remainder:
+        groups.append(values[split:].reshape((count - remainder, size) + shape).mean(axis=1))
+    return np.concatenate(groups, axis=0)
+
+
+def _downsample(time, values, count):
+    """Average the same near-equal chunks as array_split, along time only."""
+    reduced_time = _chunk_means(time[1:-1], count)
+    reduced_values = _chunk_means(values[1:-1], count)
+    return (np.concatenate((time[:1], reduced_time, time[-1:])),
+            np.concatenate((values[:1], reduced_values, values[-1:]), axis=0))
+
+
+def _interpolate_images(time, values, timestamps):
+    """Vectorize the legacy per-pixel np.interp path in bounded output chunks.
+
+    Keep its endpoint clamping, input-dtype cast (including integer truncation),
+    and object-valued images for compatibility with existing GUI consumers.
+    The detector dimensions are taken from the data.
+    """
+    time = np.asarray(time, dtype=np.float64)
+    numeric_values = values.astype(np.float64, copy=False)
+    if len(time) == 1:
+        return np.repeat(values, len(timestamps), axis=0).astype(object)
+    # Search once per timestamp, rather than once per pixel. The rightmost
+    # sample wins at duplicate timestamps, matching np.interp.
+    lower = np.clip(np.searchsorted(time, timestamps, side='right') - 1, 0, len(time) - 1)
+    upper = np.minimum(lower + 1, len(time) - 1)
+    upper[timestamps < time[0]] = 0
+    result = np.empty((len(timestamps),) + values.shape[1:], dtype=object)
+    pixels = int(np.prod(values.shape[1:]))
+    chunk_size = max(1, (8 * 1024 * 1024) // max(1, pixels * 8))
+    broadcast_shape = (-1,) + (1,) * (values.ndim - 1)
+    for start in range(0, len(timestamps), chunk_size):
+        stop = start + chunk_size
+        lo, hi = lower[start:stop], upper[start:stop]
+        query = timestamps[start:stop]
+        y_lo, y_hi = numeric_values[lo], numeric_values[hi]
+        span = (time[hi] - time[lo]).reshape(broadcast_shape)
+        with np.errstate(invalid='ignore'):
+            slope = np.divide(y_hi - y_lo, span, out=np.zeros_like(y_lo), where=span != 0)
+            interpolated = y_lo + slope * (query - time[lo]).reshape(broadcast_shape)
+            # Match np.interp's fallback for equal infinities and missing data.
+            interpolated = np.where(np.isnan(interpolated),
+                                    y_hi + slope * (query - time[hi]).reshape(broadcast_shape),
+                                    interpolated)
+            interpolated = np.where(np.isnan(interpolated) & (y_lo == y_hi), y_lo, interpolated)
+        exact = (query == time[lo]) | (lo == hi)
+        interpolated[exact] = y_lo[exact]
+        interpolated[np.isnan(query)] = np.nan
+        result[start:stop] = interpolated.astype(values.dtype)
+    return result
+
+
+def _interpolate(dataset, key_base, sort, image_mode, logger=None):
+    timestamps = _base_timestamps(dataset, key_base)
+    result = {"timestamp": timestamps}
+    for key, frame in dataset.items():
         print(f'Interpolating stream {key}...')
-        logger.info(f'({ttime.ctime()}) Interpolating stream {key}...')
-
-        time = dataset.get(key).iloc[:, 0].values
-        val = dataset.get(key).iloc[:, 1].values
-        if len(dataset.get(key).iloc[:, 0]) > 5 * len(timestamps):
-            time = [time[0]] + [np.mean(array) for array in np.array_split(time[1:-1], len(timestamps))] + [time[-1]]
-            val = [val[0]] + [np.mean(array) for array in np.array_split(val[1:-1], len(timestamps))] + [val[-1]]
-            # interpolated_dataset[key] = np.array([timestamps, np.interp(timestamps, time, val)]).transpose()
-
-        # interpolated_dataset[key] = np.array([timestamps, np.interp(timestamps, time, val)]).transpose()
-        interpolator_func = interp1d(time, np.array([v for v in val]), axis=0)
-        val_interp = interpolator_func(timestamps)
-        if len(val_interp.shape) == 1:
-            interpolated_dataset[key] = val_interp
+        if logger is not None:
+            logger.info(f'({ttime.ctime()}) Interpolating stream {key}...')
+        time = frame.iloc[:, 0].to_numpy()
+        values = _stream_values(frame)
+        if image_mode and key == 'pil100k2_image':
+            interpolated = _interpolate_images(time, values, timestamps)
         else:
-            interpolated_dataset[key] = [v for v in val_interp]
+            if len(time) > 5 * len(timestamps):
+                time, values = _downsample(time, values, len(timestamps))
+            interpolated = interp1d(time, values, axis=0)(timestamps)
+        result[key] = interpolated if interpolated.ndim == 1 else list(interpolated)
         print(f'Interpolation of stream {key} is complete')
-        logger.info(f'({ttime.ctime()}) Interpolation of stream {key} is complete')
-
-    intepolated_dataframe = pd.DataFrame(interpolated_dataset)
-    if sort:
-        return intepolated_dataframe.sort_values('energy')
-    else:
-        return intepolated_dataframe
+        if logger is not None:
+            logger.info(f'({ttime.ctime()}) Interpolation of stream {key} is complete')
+    dataframe = pd.DataFrame(result)
+    return dataframe.sort_values('energy') if sort else dataframe
 
 
+def interpolate(dataset, key_base=None, sort=True):
+    """Align streams, averaging oversampled streams before interpolation.
 
-def interpolate_with_interp(dataset, key_base = None, sort=True):
-    # logger = get_logger()
-
-    interpolated_dataset = {}
-    min_timestamp = max([dataset.get(key).iloc[0, 0] for key in dataset])
-    max_timestamp = min([dataset.get(key).iloc[len(dataset.get(key)) - 1, 0] for key in
-                         dataset if len(dataset.get(key).iloc[:, 0]) > 5])
-    if key_base is None:
-        all_keys = []
-        time_step = []
-        for key in dataset.keys():
-            all_keys.append(key)
-            # time_step.append(np.mean(np.diff(dataset[key].timestamp)))
-            time_step.append(np.median(np.diff(dataset[key].timestamp)))
-        key_base = all_keys[np.argmax(time_step)]
-    timestamps = dataset[key_base].iloc[:,0]
-
-    condition = timestamps < min_timestamp
-    timestamps = timestamps[np.sum(condition):]
-
-    condition = timestamps > max_timestamp
-    timestamps = timestamps[: (len(timestamps) - np.sum(condition) - 1)]
-
-    interpolated_dataset['timestamp'] = timestamps.values
-
-    for key in dataset.keys():
-        print(f'Interpolating stream {key}...')
-        # logger.info(f'({ttime.ctime()}) Interpolating stream {key}...')
-        if key == 'pil100k2_image':
-            print(f'---------------------------{key}----------------------------')
-            time = dataset.get(key).iloc[:, 0].values.astype(np.float64)
-            val = np.stack(dataset.get(key).iloc[:, 1].values)
-
-            shape_length = val.shape[0]
-
-            val_flat = val.reshape(shape_length, -1)
-            interpolated_flat = np.empty((len(timestamps), val_flat.shape[1]), dtype=val.dtype)
-
-            for i in range(val_flat.shape[1]):
-                interpolated_flat[:, i] = np.interp(timestamps, time, val_flat[:, i])
-
-            interpolated_reshaped = interpolated_flat.reshape(len(timestamps), 195, 487).astype('object')
-
-            interpolated_dataset[key] = [v for v in interpolated_reshaped]
-        else:
-            time = dataset.get(key).iloc[:, 0].values
-            val = dataset.get(key).iloc[:, 1].values
-            if len(dataset.get(key).iloc[:, 0]) > 5 * len(timestamps):
-                time = [time[0]] + [np.mean(array) for array in np.array_split(time[1:-1], len(timestamps))] + [time[-1]]
-                val = [val[0]] + [np.mean(array) for array in np.array_split(val[1:-1], len(timestamps))] + [val[-1]]
-
-            interpolator_func = interp1d(time, np.array([v for v in val]), axis=0)
-            val_interp = interpolator_func(timestamps)
-            interpolated_dataset[key] = val_interp
+    Array-valued streams are interpolated along their first (time) axis.
+    Sorting by energy and the existing timestamp trimming are preserved.
+    Input DataFrames are never modified.
+    """
+    return _interpolate(dataset, key_base, sort, image_mode=False, logger=get_logger())
 
 
-        # interpolator_func = interp1d(time, np.array([v for v in val]), axis=0)
-        # val_interp = interpolator_func(timestamps)
-        # if len(val_interp.shape) == 1:
-        #     interpolated_dataset[key] = val_interp
-        # else:
-        #     interpolated_dataset[key] = [v for v in val_interp]
-        # print(f'Interpolation of stream {key} is complete')
-        # logger.info(f'({ttime.ctime()}) Interpolation of stream {key} is complete')
-
-    intepolated_dataframe = pd.DataFrame(interpolated_dataset)
-    if sort:
-        return intepolated_dataframe.sort_values('energy')
-    else:
-        return intepolated_dataframe
+def interpolate_with_interp(dataset, key_base=None, sort=True):
+    """Align streams using the legacy Pilatus image interpolation semantics."""
+    return _interpolate(dataset, key_base, sort, image_mode=True)

@@ -107,26 +107,17 @@ class XASDataSet:
         self.energy_deriv=(self.energy[1:]+self.energy[:-1])/2
 
     def flatten(self):
-        # Extract e0 safely if it gets passed as a 1-element numpy array
-        e0_val = self.e0
-        if hasattr(e0_val, '__len__') and not isinstance(e0_val, (str, bytes)):
-            if hasattr(e0_val, 'flat'):
-                e0_val = next(iter(e0_val.flat))
-            elif hasattr(e0_val, 'item'):
-                e0_val = e0_val.item()
-
-        # Find flat 1D indices to prevent 2D multi-dimensional array shape errors
-        indices = np.flatnonzero(self.energy > e0_val)
-        if len(indices) == 0:
+        """Flatten the normalized spectrum above the absorption edge."""
+        e0_val = np.asarray(self.e0).item()
+        above_edge = self.energy > e0_val
+        if not np.any(above_edge):
             print("Warning: Could not find step index where energy > e0. Skipping flatten calculation.")
             return
-            
-        step_index = int(indices)
-        zeros = np.zeros(step_index)
-        ones = np.ones(self.energy.shape - step_index)
-        step = np.concatenate((zeros, ones), axis=0)
-        diffline = (self.post_edge - self.pre_edge) / self.edge_step
-        self.flat = self.norm + step * (1 - diffline)
+
+        self.flat = np.array(self.norm, dtype=float, copy=True)
+        self.flat[above_edge] += 1 - (
+            (self.post_edge[above_edge] - self.pre_edge[above_edge]) / self.edge_step
+        )
 
 
     def normalize(self):
@@ -313,23 +304,19 @@ class XASProject(QtCore.QObject):
         return self.datasets[item]
 
     def save(self, filename=None):
-        if  self._datasets:
-            if filename is not None:
-                list_to_save=[]
-                for i in self._datasets:
-                    list_to_save.append(i)
-                fid = open(filename, 'wb')
-                pickle.dump(list_to_save, fid)
-                fid.close()
-                print('XAS project was succesfully stored in {}'.format(filename))
+        if self._datasets and filename is not None:
+            with open(filename, 'wb') as fid:
+                pickle.dump(self._datasets, fid)
+            print('XAS project was succesfully stored in {}'.format(filename))
 
     def load(self, filename=None):
+        """Append a saved project and notify the GUI once after loading."""
         if filename is not None:
-            fid = open(filename, 'rb')
-            datasets = pickle.load(fid)
-            for i in datasets:
-                self.append(i)
-            fid.close()
+            with open(filename, 'rb') as fid:
+                datasets = pickle.load(fid)
+            if datasets:
+                self._datasets.extend(datasets)
+                self.datasets_changed.emit(self._datasets)
 
     def convert_into_2d_dataset(self, index=None):
         if index is None:

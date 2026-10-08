@@ -1,0 +1,8 @@
+# Offline processing tests and synthetic benchmarks (no beamline services).
+numpy
+pandas
+scipy
+numexpr
+xraydb
+pytest
+threadpoolctl
