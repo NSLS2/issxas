@@ -1,4 +1,7 @@
 
+import json
+
+
 def update_list_decorator(method):
     def wrapper(obj, *args, emit_signal=True, **kwargs):
         result = method(obj, *args, **kwargs)
@@ -376,4 +379,3 @@ class ItemModel(QtGui.QStandardItemModel):
 
 
 bla = ItemModel()
-

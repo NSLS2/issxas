@@ -75,6 +75,7 @@ class XASDataSet:
                     self.edge_step = None
 
             if xasdataset is not None:
+                self.flatten_method = getattr(xasdataset, 'flatten_method', 'legacy')
                 self.clamp_hi = xasdataset.clamp_hi
                 self.clamp_lo = xasdataset.clamp_lo
                 self.kmin = xasdataset.kmin
@@ -108,13 +109,15 @@ class XASDataSet:
 
     def flatten(self):
         """Flatten the normalized spectrum above the absorption edge."""
+        if getattr(self, 'flatten_method', 'legacy') == 'larch':
+            self.flat = self.larch.flat.copy()
+            return
         e0_val = np.asarray(self.e0).item()
         above_edge = self.energy > e0_val
+        self.flat = np.array(self.norm, dtype=float, copy=True)
         if not np.any(above_edge):
-            print("Warning: Could not find step index where energy > e0. Skipping flatten calculation.")
             return
 
-        self.flat = np.array(self.norm, dtype=float, copy=True)
         self.flat[above_edge] += 1 - (
             (self.post_edge[above_edge] - self.pre_edge[above_edge]) / self.edge_step
         )
@@ -130,6 +133,7 @@ class XASDataSet:
         self.pre2 = self.larch.pre_edge_details.pre2
         self.norm1 = self.larch.pre_edge_details.norm1
         self.norm2 = self.larch.pre_edge_details.norm2
+        self.nnorm = self.larch.pre_edge_details.nnorm
         self.e0 = self.larch.e0
         self.pre_edge=self.larch.pre_edge
         self.post_edge = self.larch.post_edge
@@ -142,6 +146,8 @@ class XASDataSet:
                                                                            norm1=self.norm1, norm2=self.norm2, nnorm=self.nnorm)
         self.norm = self.larch.norm
         self.e0 = self.larch.e0
+        for key in ('pre1', 'pre2', 'norm1', 'norm2', 'nnorm'):
+            setattr(self, key, getattr(self.larch.pre_edge_details, key))
         self.pre_edge=self.larch.pre_edge
         self.post_edge = self.larch.post_edge
         self.edge_step = self.larch.edge_step
@@ -152,6 +158,7 @@ class XASDataSet:
         autobk(self.larch, group=self.larch,  _larch=self._larch)
 
         self.chi = self.larch.chi
+        self.k = self.larch.k
         self.bkg = self.larch.bkg
         self.kmin = self.larch.autobk_details.kmin
         self.kmax = self.larch.autobk_details.kmax
@@ -177,18 +184,18 @@ class XASDataSet:
         #print('ft reporting')
         #print(self.kmin_ft)
         # xftf(self.larch, group=self.larch,  _larch=self._larch, kmin=self.kmin_ft, kmax=self.kmax)
-        xftf(self.larch, group=self.larch, _larch=self._larch,kmin=self.kmin_ft, kmax=self.kmax_ft)
+        xftf(self.larch, group=self.larch, _larch=self._larch,
+             kmin=self.kmin_ft, kmax=self.kmax_ft, kweight=self.kweight)
 
         self.r = self.larch.r
         self.chir = self.larch.chir
         self.chir_mag = self.larch.chir_mag
-        self.chir_im = self.larch.chir_re
-        self.chir_re = self.larch.chir_im
+        self.chir_im = self.larch.chir_im
+        self.chir_re = self.larch.chir_re
         #self.chir_pha = self.larch.chir_pha
-        self.kmax_ft = self.kmax
         self.kwin = self.larch.kwin
 
-    def extract_ft_force(self, window={}):
+    def extract_ft_force(self, window=None):
         #print('ft force reporting')
         if not window:
             xftf(self.larch, group=self.larch,  _larch=self._larch,
@@ -196,16 +203,15 @@ class XASDataSet:
         else:
             window_type = window['window_type']
             tapering = window['tapering']
-            r_weight = window['r_weight']
             # print('setting window')
             xftf(self.larch, group=self.larch, _larch=self._larch,
                  kmin=self.kmin_ft, kmax=self.kmax_ft, kweight=self.kweight,
-                 window=window_type, dk=tapering,rweight=r_weight)
+                 window=window_type, dk=tapering)
         self.r = self.larch.r
         self.chir = self.larch.chir
         self.chir_mag = self.larch.chir_mag
-        self.chir_im = self.larch.chir_re
-        self.chir_re = self.larch.chir_im
+        self.chir_im = self.larch.chir_im
+        self.chir_re = self.larch.chir_re
         #self.chir_pha = self.larch.chir_phas
         self.kwin = self.larch.kwin
 
@@ -346,8 +352,6 @@ class XASProject(QtCore.QObject):
 
 
 useful_md_keys = ['name', 'time', 'sample_x_position', 'sample_y_position']
-
-
 
 
 

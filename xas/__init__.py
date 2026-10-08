@@ -1,4 +1,7 @@
+"""X-ray absorption spectroscopy processing for NSLS-II ISS."""
+from importlib.metadata import PackageNotFoundError, version
 
-from ._version import get_versions
-__version__ = get_versions()['version']
-del get_versions
+try:
+    __version__ = version("xas")
+except PackageNotFoundError:
+    __version__ = "0+unknown"

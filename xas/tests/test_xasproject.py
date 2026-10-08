@@ -50,12 +50,14 @@ def test_flatten_preserves_preedge_and_corrects_postedge(project_module, e0):
     assert not np.shares_memory(dataset.flat, dataset.norm)
 
 
-def test_flatten_without_postedge_retains_existing_behavior(project_module, capsys):
+def test_flatten_without_postedge_clears_stale_result(project_module):
     dataset = project_module.XASDataSet(energy=np.arange(3.), process=False)
     dataset.e0 = 5.
+    dataset.norm = np.array([0., 0.1, 0.2])
+    dataset.flat = np.ones(3)
     dataset.flatten()
-    assert "Skipping flatten calculation" in capsys.readouterr().out
-    assert not hasattr(dataset, "flat")
+    assert_array_equal(dataset.flat, dataset.norm)
+    assert not np.shares_memory(dataset.flat, dataset.norm)
 
 
 def test_load_appends_all_datasets_before_notifying_gui(project_module, tmp_path):

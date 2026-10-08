@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xas"
+dynamic = ["version", "dependencies"]
+description = "X-ray absorption spectroscopy processing for NSLS-II ISS"
+readme = "README.rst"
+requires-python = ">=3.12"
+license = "BSD-3-Clause"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["xas*"]
+exclude = ["xas.tests*"]
+
+[tool.setuptools_scm]
+fallback_version = "0+unknown"
+
+[tool.pytest.ini_options]
+testpaths = ["xas/tests"]
+
+[tool.ruff]
+target-version = "py312"
+
+[project.optional-dependencies]
+acquisition = ["databroker[back-compat]>=2.0.0b68,<3", "ophyd>=1.10,<2", "caproto>=1.1.1,<2", "pexpect>=4.9,<5"]
+scattering = ["pyFAI>=2025.1", "kkcalc>=0.8"]
+test = ["pytest>=8,<10", "threadpoolctl>=3.5,<4"]

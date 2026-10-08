@@ -1,4 +1,5 @@
 from lmfit import Model
+from scipy import interpolate
 import numpy as np
 
 def gaussian(x, amp, cen, sigma, bkg):
@@ -128,5 +129,4 @@ class Nominal2ActualConverterWithLinearInterpolation:
         else:
             f = interpolate.interp1d(self.x_act, self.x_nom, kind='linear', fill_value='extrapolate')
             return f(x_act)
-
 

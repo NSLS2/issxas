@@ -132,7 +132,10 @@ def crystal_temp_factor(crystal, bragg_deg, energy_ev):
 def crystal_reflectivity(crystal, hkl, bragg_deg, energy_ev):
     TF = crystal_temp_factor(crystal, bragg_deg, energy_ev)
     dw = xraydb.darwin_width(energy_ev, crystal, hkl, polarization='u')
-    return TF * np.trapz(dw.intensity, dw.dtheta*1e6)
+    # Supports NumPy 1.26 as well as NumPy 2, which removed np.trapz.
+    from scipy.integrate import trapezoid
+
+    return TF * trapezoid(dw.intensity, dw.dtheta*1e6)
 
 # vvv = []
 # args = ('Si', [6, 10, 12], 82.19, 19279); bla = crystal_reflectivity(*args); vvv.append(args + (bla, 0.6857 ))
@@ -156,20 +159,20 @@ def generate_energy_grid(e0, preedge_start, xanes_start, xanes_end, exafs_end, p
 
     iterator = exafsk_spacing
     kenergy = 0
-    postedge = np.array([])
+    postedge = []
 
     energy_end = k2e(exafs_end, e0)
     exafs_int = []
     while(kenergy + e0 + xanes_end < energy_end):
         kenergy = k2e(iterator, e0) - e0
 
-        postedge = np.append(postedge, e0 + xanes_end + kenergy)
+        postedge.append(e0 + xanes_end + kenergy)
         k_current = e2k(e0 + xanes_end + kenergy,e0)
         exafs_int.append(dwell_time_exafs * (k_current ** k_power))
         iterator += exafsk_spacing
 
-    integration_times = np.append(np.append(preedge_int, edge_int), np.array(exafs_int))
-    grid = np.append(np.append(preedge, edge), postedge)
+    integration_times = np.concatenate((preedge_int, edge_int, exafs_int))
+    grid = np.concatenate((preedge, edge, postedge))
     return grid, integration_times
     #return np.append(np.append(preedge, edge), postedge)
 

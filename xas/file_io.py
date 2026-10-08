@@ -240,7 +240,7 @@ def load_interpolated_df_from_file(filename):
         raise IOError(f'The file {filename} does not exist.')
     header = read_header(filename)
     keys = header[header.rfind('#'):][1:-1].split()
-    df = pd.read_csv(filename, delim_whitespace=True, comment='#', names=keys, index_col=False)
+    df = pd.read_csv(filename, sep=r'\s+', comment='#', names=keys, index_col=False)
     if 'energy' in [i.lower() for i in df.columns]: # i am sorry /// Denis
         df = df.sort_values('energy'.lower())
     return df, header
@@ -267,7 +267,7 @@ def load_binned_df_from_file(filename):
         raise IOError(f'The file {filename} does not exist.')
     header = read_header(filename)
     keys = header[header.rfind('#'):][1:-1].split()
-    df = pd.read_csv(filename, delim_whitespace=True, comment='#', names=keys, index_col=False)
+    df = pd.read_csv(filename, sep=r'\s+', comment='#', names=keys, index_col=False)
 
     energy_key = None
     for col in df.columns:
@@ -708,4 +708,3 @@ def dump_tiff_images(path_to_file, df, extended_data, df_red=None, tiff_storage_
         df_red.to_csv(dat_file_fpath, sep='\t', index=False)
         filepath_list.append(dat_file_fpath)
         return filepath_list
-
