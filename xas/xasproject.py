@@ -108,23 +108,30 @@ class XASDataSet:
         self.energy_deriv=(self.energy[1:]+self.energy[:-1])/2
 
     def flatten(self):
-        # Extract e0 safely if it gets passed as a 1-element numpy array
-        e0_val = self.e0
-        if hasattr(e0_val, '__len__') and not isinstance(e0_val, (str, bytes)):
-            if hasattr(e0_val, 'flat'):
-                e0_val = next(iter(e0_val.flat))
-            elif hasattr(e0_val, 'item'):
-                e0_val = e0_val.item()
+        # # Extract e0 safely if it gets passed as a 1-element numpy array
+        # e0_val = self.e0
+        # if hasattr(e0_val, '__len__') and not isinstance(e0_val, (str, bytes)):
+        #     if hasattr(e0_val, 'flat'):
+        #         e0_val = next(iter(e0_val.flat))
+        #     elif hasattr(e0_val, 'item'):
+        #         e0_val = e0_val.item()
+        #
+        # # Find flat 1D indices to prevent 2D multi-dimensional array shape errors
+        # indices = np.flatnonzero(self.energy > e0_val)
+        # if len(indices) == 0:
+        #     print("Warning: Could not find step index where energy > e0. Skipping flatten calculation.")
+        #     return
+        #
+        # step_index = int(indices)
+        # zeros = np.zeros(step_index)
+        # ones = np.ones(self.energy.shape - step_index)
+        # step = np.concatenate((zeros, ones), axis=0)
+        # diffline = (self.post_edge - self.pre_edge) / self.edge_step
+        # self.flat = self.norm + step * (1 - diffline)
 
-        # Find flat 1D indices to prevent 2D multi-dimensional array shape errors
-        indices = np.flatnonzero(self.energy > e0_val)
-        if len(indices) == 0:
-            print("Warning: Could not find step index where energy > e0. Skipping flatten calculation.")
-            return
-            
-        step_index = int(indices)
+        step_index = int(np.argwhere(self.energy > self.e0)[0])
         zeros = np.zeros(step_index)
-        ones = np.ones(self.energy.shape - step_index)
+        ones = np.ones(self.energy.shape[0] - step_index)
         step = np.concatenate((zeros, ones), axis=0)
         diffline = (self.post_edge - self.pre_edge) / self.edge_step
         self.flat = self.norm + step * (1 - diffline)
