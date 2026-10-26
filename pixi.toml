@@ -1,4 +1,5 @@
 [workspace]
+requires-pixi = ">=0.82.1"
 authors = ["Dan Allan <>"]
 channels = ["conda-forge"]
 name = "iss-data-sec"
