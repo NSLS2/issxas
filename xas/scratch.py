@@ -4879,3 +4879,98 @@ class TwoButtonShutter(Device):
         self.read_attrs = ['status']
 
 ln2_valve = TwoButtonShutter('XF:08ID-UT{LN2-Vlv}', name='ln2_valve')
+
+
+
+import pandas as pd
+
+import pandas as pd
+
+data = {
+    'Edge': [
+        'Ti-K', 'V-K', 'Cr-K', 'Mn-K', 'Fe-K', 'Co-K', 'Ni-K', 'Cu-K', 'Zn-K',
+        'W-L3', 'Ir-L3', 'Au-L3', 'Rb-K', 'Zr-K', 'Nb-K*', 'Mo-K', 'Ru-K*',
+        'Rh-K*', 'Pd-K', 'Ag-K*', 'Cd-K*', 'In-K', 'Sn-K*', 'Sb-K*', 'Te-K'
+    ],
+    'Energy (eV)': [
+        4950, 5465, 5989, 6539, 7112, 7709, 8333, 8979, 9659,
+        10207, 11215, 11919, 15200, 17988, 18986, 20000, 22117,
+        23220, 24350, 25514, 26711, 27940, 29200, 30491, 31814
+    ],
+    'Vertical pos (mm)': [
+        0.628, 0.629, 0.629, 0.633, 0.635, 0.636, 0.636, 0.636, 0.636,
+        0.636, 0.636, 0.636, 0.735, 0.785, 0.821, 0.792, 0.822,
+        0.824, 0.776, 0.827, 0.727, 0.776, 0.923, 0.727, 0.889
+    ],
+    'I0': [
+        6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 7, 8
+    ],
+    'It': [
+        7, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 7, 8
+    ],
+    'Ir': [
+        7, 7, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 7, 8
+    ],
+    'HHM Pitch (um)': [
+        504.80, 504.21, 503.67, 503.12, 502.68, 502.55, 502.10, 501.77, 501.48,
+        501.30, 500.98, 501.03, 499.87, 499.67, 498.53, 499.63, 498.27,
+        498.25, 499.08, 498.13, 497.99, 499.04, 497.55, 497.82, 499.31
+    ],
+    'HHM Roll (um)': [
+        473.50, 473.50, 474.00, 474.00, 474.50, 473.00, 473.00, 473.00, 473.00,
+        473.50, 473.50, 472.50, 473.00, 474.00, 474.00, 474.00, 475.00,
+        476.00, 482.00, 480.00, 480.00, 482.00, 484.00, 484.00, 482.00
+    ],
+    'HHM Y (mm)': [
+        8.949, 8.793, 8.704, 8.610, 8.566, 8.499, 8.453, 8.403, 8.407,
+        8.358, 8.357, 8.334, 8.230, 8.194, 8.239, 8.193, 8.222,
+        8.234, 8.245, 8.233, 8.223, 8.200, 8.239, 8.255, 8.249
+    ],
+    'BPM ES exp time': [
+        0.085, 0.085, 0.160, 0.140, 0.120, 0.130, 0.140, 0.140, 0.140,
+        0.170, 0.185, 0.170, 0.235, 0.220, 0.200, 0.220, 0.225,
+        0.230, 0.230, 0.230, 0.230, 0.230, 0.230, 0.230, 0.380
+    ],
+    'Table high': [
+        45.942, 45.992, 45.996, 45.987, 46.004, 46.001, 46.036, 46.006, 45.990,
+        46.064, 46.067, 46.184, 45.908, 45.805, 45.797, 45.747, 45.824,
+        45.793, 45.768, 45.789, 45.805, 45.792, 45.715, 45.811, 45.517
+    ]
+}
+
+# Convert to pandas DataFrame
+df = pd.DataFrame(data)
+
+df = pd.DataFrame(data).dropna().reset_index(drop=True)
+
+
+
+columns = [['HHM Pitch (um)', 'HHM Roll (um)', 'HHM Y (mm)'],
+           ['I0','It','Ir'],
+           ['Vertical pos (mm)', 'BPM ES exp time', 'Table high']
+           ]
+
+def get_interpolation(energy_value, energy_array, value_array):
+    f = interpolate.interp1d(energy_array, value_array, kind='cubic', fill_value='extrapolate')
+    return f(energy_value)
+
+energy = np.arange(5000, 32100, 100)
+
+fig, ax = plt.subplots(3,3, figsize=(15,12))
+for i in range(3):
+    for j in range(3):
+        interp = [get_interpolation(e, df['Energy (eV)'], df[columns[i][j]]) for e in energy]
+        poly = np.polyfit(df['Energy (eV)'],df[columns[i][j]], deg=3)
+        fit = np.polyval(poly, energy)
+        ax[i,j].plot(df['Energy (eV)'], df[columns[i][j]], label=columns[i][j])
+        ax[i,j].plot(energy, interp, color = 'r', label='interpolated data')
+        ax[i,j].plot(energy, fit, color = 'b', label="poly fit 3 deg")
+        ax[i,j].legend()
+        ax[i,j].set_title(columns[i][j])
+        ax[i,j].set_xlabel('Energy (eV)')
+        ax[i,j].set_ylabel(columns[i][j])
+plt.tight_layout()
+
+def get_interpolation(energy_value, energy_array, value_array):
+    f = interpolate.interp1d(energy_array, value_array, kind='cubic', fill_value='extrapolate')
+    return f(energy_value)
