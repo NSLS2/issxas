@@ -8,9 +8,11 @@ import time as ttime
 import h5py
 
 
-def load_apb_dataset_from_db(db, uid):
+def load_apb_dataset_from_db(db, uid, hdr=None):
     logger= get_logger()
-    hdr = db[uid]
+    if hdr is None:
+        hdr = db[uid]
+    start = dict(hdr.start)  # snapshot once — avoids repeated HTTP round-trips on Tiled
     logger.info(f'({ttime.ctime()}) Retrieving pizzabox data... ')
     apb_dataset = list(hdr.data(stream_name='apb_stream', field='apb_stream'))[0].copy()
     logger.info(f'({ttime.ctime()}) Pizzabox data extracted from DB')
@@ -48,14 +50,14 @@ def load_apb_dataset_from_db(db, uid):
     logger.info(f'({ttime.ctime()}) Encoder data received.')
     energy_dataset = pd.DataFrame(energy_dataset,
                                   columns=['ts_s', 'ts_ns', 'encoder', 'index', 'state'])
-    angle_offset = -float(hdr['start']['angle_offset'])
+    angle_offset = -float(start['angle_offset'])
 
     energy_dataset = energy_dataset[energy_dataset['ts_s'] > 1]
     # ch_offset_keys = [key for key in hdr.start.keys() if key.startswith('ch') and key.endswith('_offset')]
     # ch_offsets = np.array([hdr.start[key] for key in ch_offset_keys])
 
-    ch_offsets = get_ch_properties(hdr.start, 'ch', '_offset')*1e3 #offsets are ib mV but the readings are in uV
-    ch_gains = get_ch_properties(hdr.start, 'ch', '_amp_gain')
+    ch_offsets = get_ch_properties(start, 'ch', '_offset')*1e3 #offsets are ib mV but the readings are in uV
+    ch_gains = get_ch_properties(start, 'ch', '_amp_gain')
 
     apb_dataset.iloc[:, 1:] -= ch_offsets
     apb_dataset.iloc[:, 1:] /= 1e6
@@ -64,9 +66,11 @@ def load_apb_dataset_from_db(db, uid):
     return apb_dataset, energy_dataset, angle_offset
 
 
-def load_apb_dataset_only_from_db(db, uid):
+def load_apb_dataset_only_from_db(db, uid, hdr=None):
     logger = get_logger()
-    hdr = db[uid]
+    if hdr is None:
+        hdr = db[uid]
+    start = dict(hdr.start)  # snapshot once — avoids repeated HTTP round-trips on Tiled
     logger.info(f'({ttime.ctime()}) Retrieving pizzabox data... ')
     apb_dataset = list(hdr.data(stream_name='apb_stream', field='apb_stream'))[0].copy()
     logger.info(f'({ttime.ctime()}) Pizzabox data received.')
@@ -74,9 +78,8 @@ def load_apb_dataset_only_from_db(db, uid):
                                columns=['timestamp', 'i0', 'it', 'ir', 'iff', 'aux1', 'aux2', 'aux3', 'aux4'])
     # apb_dataset = list(hdr.data(stream_name='apb_stream', field='apb_stream'))[0]
 
-
-    ch_offsets = get_ch_properties(hdr.start, 'ch', '_offset')*1e3 #offsets are ib mV but the readings are in uV
-    ch_gains = get_ch_properties(hdr.start, 'ch', '_amp_gain')
+    ch_offsets = get_ch_properties(start, 'ch', '_offset')*1e3 #offsets are ib mV but the readings are in uV
+    ch_gains = get_ch_properties(start, 'ch', '_amp_gain')
 
     apb_dataset.iloc[:, 1:] -= ch_offsets
     apb_dataset.iloc[:, 1:] /= 1e6
@@ -124,9 +127,9 @@ def translate_apb_only_dataset(apb_dataset):
     return data_dict
 
 
-def load_apb_trig_dataset_from_db(db, uid, use_fall=True, stream_name='apb_trigger_xs'):
-
-    hdr = db[uid]
+def load_apb_trig_dataset_from_db(db, uid, use_fall=True, stream_name='apb_trigger_xs', hdr=None):
+    if hdr is None:
+        hdr = db[uid]
     # t = hdr.table(stream_name=stream_name, fill=True)
     data = list(hdr.data(stream_name=stream_name, field=stream_name))[0]
     _timestamps = np.array([f[0] for f in data])
@@ -185,8 +188,9 @@ def load_xs3_dataset_from_db_legacy(db, uid, apb_trig_timestamps):
     return spectra
 
 # this is compatible with new handlers
-def load_xs3_dataset_from_db(db, uid, apb_trig_timestamps):
-    hdr = db[uid]
+def load_xs3_dataset_from_db(db, uid, apb_trig_timestamps, hdr=None):
+    if hdr is None:
+        hdr = db[uid]
     t = hdr.table(stream_name='xs_stream', fill=True)
     # n_spectra = t.size
     n_spectra = min(t['xs_ch01_roi01'][1].size, apb_trig_timestamps.size)
@@ -209,8 +213,9 @@ def load_xs3_dataset_from_db(db, uid, apb_trig_timestamps):
 
 
 
-def load_xia_dataset_from_db(db, uid, apb_trig_timestamps):
-    hdr = db[uid]
+def load_xia_dataset_from_db(db, uid, apb_trig_timestamps, hdr=None):
+    if hdr is None:
+        hdr = db[uid]
     t = hdr.table(stream_name='ge_detector_stream', fill=True)
     n_spectra = min(t['ge_detector_channels_mca1_R0'][1].size, apb_trig_timestamps.size)
     xs_timestamps = apb_trig_timestamps[:n_spectra]
@@ -235,8 +240,10 @@ pil100k_legacy_keys_match = {   'pil100k_ROI1': 'pil100k_roi1',
                                 'pil100k_ROI4': 'pil100k_roi4',
                                 'image' : 'pil100k_image'}
 
-def _load_pil100k_dataset_from_db_legacy(db, uid, apb_trig_timestamps, input_type='hdf5'):
-    hdr = db[uid]
+def _load_pil100k_dataset_from_db_legacy(db, uid, apb_trig_timestamps, input_type='hdf5', hdr=None):
+    if hdr is None:
+        hdr = db[uid]
+    start = dict(hdr.start)  # snapshot once
     spectra = {}
     if input_type == 'tiff':
         t = hdr.table(stream_name='pil100k_stream', fill=True)['pil100k_stream']
@@ -245,7 +252,7 @@ def _load_pil100k_dataset_from_db_legacy(db, uid, apb_trig_timestamps, input_typ
         pil100k_timestamps = apb_trig_timestamps[:n_images]
 
         image_array = np.array([i for i in t])
-        rois = hdr.start['roi']
+        rois = start['roi']
 
 
         for j in range(4):
@@ -268,9 +275,10 @@ def _load_pil100k_dataset_from_db_legacy(db, uid, apb_trig_timestamps, input_typ
         return output
 
 
-def _load_pil100k_dataset_from_db(db, uid, apb_trig_timestamps, pil100k_stream_name='pil100k_stream', load_images=False):
+def _load_pil100k_dataset_from_db(db, uid, apb_trig_timestamps, pil100k_stream_name='pil100k_stream', load_images=False, hdr=None):
     logger = get_logger()
-    hdr = db[uid]
+    if hdr is None:
+        hdr = db[uid]
     output = {}
     # t = hdr.table(stream_name='pil100k_stream', fill=True)
     pil100k_name = pil100k_stream_name.split('_')[0]
@@ -330,13 +338,13 @@ def read_pilatus_data_from_documents(hdr=None, stream_name=None):
 
     pass
 
-def load_pil100k_dataset_from_db(db, uid, apb_trig_timestamps, pil100k_stream_name='pil100k_stream', load_images=False):
+def load_pil100k_dataset_from_db(db, uid, apb_trig_timestamps, pil100k_stream_name='pil100k_stream', load_images=False, hdr=None):
     try:
-        return _load_pil100k_dataset_from_db(db, uid, apb_trig_timestamps, pil100k_stream_name=pil100k_stream_name, load_images=load_images)
+        return _load_pil100k_dataset_from_db(db, uid, apb_trig_timestamps, pil100k_stream_name=pil100k_stream_name, load_images=load_images, hdr=hdr)
     except Exception as e:
         print(f'Failed to read pilatus data. Reason: {e}')
         print('Attempting to use legacy loader')
-        return _load_pil100k_dataset_from_db_legacy(db, uid, apb_trig_timestamps, input_type='hdf5')
+        return _load_pil100k_dataset_from_db_legacy(db, uid, apb_trig_timestamps, input_type='hdf5', hdr=hdr)
 
 
 class MockHeader:

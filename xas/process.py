@@ -32,8 +32,10 @@ def process_interpolate_bin(doc, db, processing_repo='xas', draw_func_interp = N
     logger = get_logger()
     logger.info(f'({ttime.ctime()}) Processing has begun -----------------------------------------------')
 
-    if 'experiment' in db[doc['run_start']].start.keys():
-        uid = doc['run_start']
+    uid = doc['run_start']
+    hdr = db[uid]
+    start = dict(hdr.start)  # snapshot once — avoids a second db[uid] call inside process_interpolate_bin_from_uid
+    if 'experiment' in start:
         print(f"processing {uid} in using repo {processing_repo}")
         if processing_repo == 'xas':
             process_interpolate_bin_from_uid(uid, db, draw_func_interp=draw_func_interp, draw_func_bin=draw_func_bin,
@@ -129,13 +131,18 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     hdr = db[uid]
     if update_start is not None:
         hdr = update_header_start(hdr, update_start)
-    experiment = hdr.start['experiment']
+    # Snapshot start and stream_names once — each property access on a Tiled BlueskyRun
+    # is a separate HTTP round-trip; reading them once and reusing the dicts avoids
+    # re-fetching the same metadata on every load_* call below.
+    start = dict(hdr.start)
+    stream_names = list(hdr.stream_names)
+    experiment = start['experiment']
     if experiment in _legacy_experiment_reg.keys(): experiment = _legacy_experiment_reg[experiment]
     comments = create_file_header(hdr)
     if (processing_kwargs is not None) and ('interp_filename' in processing_kwargs):
         path_to_file = processing_kwargs['interp_filename']
     else:
-        path_to_file = hdr.start['interp_filename']
+        path_to_file = start['interp_filename']
     path_to_file = _shift_root(path_to_file)
     validate_path_exists(path_to_file)
     path_to_file = validate_file_exists(path_to_file, file_type='interp')
@@ -145,10 +152,9 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     logger.info(f'({ttime.ctime()}) Processing started for {uid}/{path_to_file}')
     if experiment == 'fly_scan':
         logger.info(f'({ttime.ctime()}) Processing fly scan')
-        stream_names = hdr.stream_names
         try:
-            # default detectors
-            apb_df, energy_df, energy_offset = load_apb_dataset_from_db(db, uid)
+            # default detectors — pass hdr so callee skips its own db[uid] call
+            apb_df, energy_df, energy_offset = load_apb_dataset_from_db(db, uid, hdr=hdr)
             raw_dict = translate_apb_dataset(apb_df, energy_df, energy_offset)
             logger.info(f'({ttime.ctime()}) Pizzabox and monochromator data processed')
             for stream_name in stream_names:
@@ -159,23 +165,24 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
                     apb_trigger_stream_name = f'apb_trigger_{pil100k_name}'
 
                     apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(db, uid, use_fall=True,
-                                                                                   stream_name=apb_trigger_stream_name)
+                                                                                   stream_name=apb_trigger_stream_name,
+                                                                                   hdr=hdr)
                     logger.info(f'({ttime.ctime()}) Trigger data received')
                     logger.info(f'({ttime.ctime()}) Retrieving Pilatus data...')
                     pil100k_dict = load_pil100k_dataset_from_db(db, uid, apb_trigger_pil100k_timestamps,
                                                                 pil100k_stream_name=pil100k_stream_name,
-                                                                load_images=load_images)
+                                                                load_images=load_images, hdr=hdr)
                     logger.info(f'({ttime.ctime()}) Pilatus data received')
                     raw_dict = {**raw_dict, **pil100k_dict}
 
                 elif stream_name == 'xs_stream':
-                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs')
-                    xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps)
+                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs', hdr=hdr)
+                    xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps, hdr=hdr)
                     logger.info(f'({ttime.ctime()}) SDD data received')
                     raw_dict = {**raw_dict, **xs3_dict}
                 elif stream_name == 'ge_detector_stream':
-                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_ge_detector')
-                    xia_dict = load_xia_dataset_from_db(db, uid, apb_trigger_xia_timestamps)
+                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_ge_detector', hdr=hdr)
+                    xia_dict = load_xia_dataset_from_db(db, uid, apb_trigger_xia_timestamps, hdr=hdr)
                     logger.info(f'({ttime.ctime()}) XIA data received')
                     raw_dict = {**raw_dict, **xia_dict}
                     pass #WIP for flying Ge detrctor
@@ -203,7 +210,7 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
             if e0 > 0:
                 # rebin_kwargs = filter_rebin_kwargs(processing_kwargs)
                 rebin_kwargs = {}
-                processed_df = rebin(interpolated_df, e0, **rebin_kwargs, skip_binning=hdr.start['radiation_damage_scan'], radiation_damage_scan=hdr.start['radiation_damage_scan'])
+                processed_df = rebin(interpolated_df, e0, **rebin_kwargs, skip_binning=start['radiation_damage_scan'], radiation_damage_scan=start['radiation_damage_scan'])
                 (path, extension) = os.path.splitext(path_to_file)
                 path_to_file = path + '.dat'
                 logger.info(f'({ttime.ctime()}) Binning successful for {path_to_file}')
@@ -231,7 +238,8 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
 
     elif experiment == 'epics_fly_scan':
         logger.info(f'({ttime.ctime()}) Processing EPICS fly scan')
-        processed_df = get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file=save_interpolated_file,
+        processed_df = get_processed_df_from_uid_for_epics_fly_scan(db, uid, hdr=hdr,
+                                                                    save_interpolated_file=save_interpolated_file,
                                                                     path_to_file=path_to_file,
                                                                     comments=comments, load_images=load_images,
                                                                     processing_kwargs=processing_kwargs)
@@ -248,8 +256,8 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     primary_df, extended_data = split_df_data_into_primary_and_extended(processed_df)
 
     ### WIP
-    if 'spectrometer' in hdr.start.keys():
-        if hdr.start['spectrometer'] == 'von_hamos':
+    if 'spectrometer' in start.keys():
+        if start['spectrometer'] == 'von_hamos':
             von_hamos_kwargs = filter_von_hamos_kwargs(processing_kwargs)
             extended_data, comments, file_paths = process_von_hamos_scan(primary_df, extended_data, comments, hdr,
                                                                          path_to_file, db=db, **von_hamos_kwargs)
@@ -331,10 +339,13 @@ def clean_dict(raw_dict):
     return clean_raw_dict
 
 
-def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file=False, path_to_file=None,
+def get_processed_df_from_uid_for_epics_fly_scan(db, uid, hdr=None, save_interpolated_file=False, path_to_file=None,
                                                  comments=None, load_images=False, processing_kwargs=None):
-    hdr = db[uid]
-    stream_names = hdr.stream_names
+    if hdr is None:
+        hdr = db[uid]
+    # Snapshot once — avoids repeated HTTP round-trips on Tiled
+    start = dict(hdr.start)
+    stream_names = list(hdr.stream_names)
     logger = get_logger()
 
     # if (hdr.start['spectrometer'] == 'johann'):
@@ -348,7 +359,7 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
 
         for stream_name in stream_names:
             if stream_name == 'apb_stream':
-                apb_df = load_apb_dataset_only_from_db(db, uid)
+                apb_df = load_apb_dataset_only_from_db(db, uid, hdr=hdr)
                 raw_dict = {**raw_dict, **translate_apb_only_dataset(apb_df)}
 
             elif (stream_name == 'pil100k_stream') or (stream_name == 'pil100k2_stream'):
@@ -357,19 +368,20 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
                   apb_trigger_stream_name = f'apb_trigger_{pil100k_name}'
                   logger.info(f'({ttime.ctime()}) Retrieving trigger data...')
                   apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(db, uid, use_fall=True,
-                                                                                 stream_name=apb_trigger_stream_name)
+                                                                                 stream_name=apb_trigger_stream_name,
+                                                                                 hdr=hdr)
                   logger.info(f'({ttime.ctime()}) Trigger data received')
                   logger.info(f'({ttime.ctime()}) Retrieving Pilatus data...')
                   pil100k_dict = load_pil100k_dataset_from_db(db, uid, apb_trigger_pil100k_timestamps,
                                                               pil100k_stream_name=pil100k_stream_name,
-                                                              load_images=load_images)
+                                                              load_images=load_images, hdr=hdr)
                   logger.info(f'({ttime.ctime()}) Pilatus data received')
                   raw_dict = {**raw_dict, **pil100k_dict}
 
             elif stream_name == 'xs_stream':
-                apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs')
+                apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs', hdr=hdr)
                 logger.info(f'({ttime.ctime()}) Retrieving SDD data...')
-                xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps)
+                xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps, hdr=hdr)
                 logger.info(f'({ttime.ctime()}) SDD data received')
                 raw_dict = {**raw_dict, **xs3_dict}
 
@@ -403,15 +415,15 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
     except Exception as e:
         # logger.info(f'({ttime.ctime()}) Interpolation failed for {uid}')
         raise e
-    if 'spectrometer' in hdr.start:
-        if 'roi_polygon' in hdr.start['detectors']['Pilatus 100k New']['config']:
-        # if 'roi_polygon' in hdr.start['detectors']['Pilatus 100k']['config']:
+    if 'spectrometer' in start:
+        if 'roi_polygon' in start['detectors']['Pilatus 100k New']['config']:
+        # if 'roi_polygon' in start['detectors']['Pilatus 100k']['config']:
             # johann_image_kwargs = filter_johann_image_kwargs(processing_kwargs)
-            # if (hdr.start['spectrometer'] == 'johann') and (load_images):
+            # if (start['spectrometer'] == 'johann') and (load_images):
             #     interpolated_df = reduce_johann_images(interpolated_df, hdr, **johann_image_kwargs)
 
             johann_calibration_kwargs = filter_johann_calibration_kwargs(processing_kwargs)
-            if (hdr.start['spectrometer'] == 'johann') and (load_images):
+            if (start['spectrometer'] == 'johann') and (load_images):
                 interpolated_df, energy_key = convert_roll_to_energy_for_johann_fly_scan(interpolated_df, hdr, **johann_calibration_kwargs)
                 # return interpolated_df
                 if energy_key is not None:
@@ -420,7 +432,7 @@ def get_processed_df_from_uid_for_epics_fly_scan(db, uid, save_interpolated_file
                     processed_df = bin_epics_fly_scan(interpolated_df, key_base='energy', step_size=step_size)
                     return processed_df
     try:
-        stream_name = hdr.start['motor_stream_names'][0]
+        stream_name = start['motor_stream_names'][0]
         _stream_name = stream_name[:stream_name.index('monitor') - 1]
         if ('johann' in _stream_name) and (('roll' in _stream_name) or ('yaw' in _stream_name)):
             step_size = 5
