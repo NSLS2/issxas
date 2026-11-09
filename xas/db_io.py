@@ -63,60 +63,53 @@ def _read_records_from_node(node, hdr, stream_name, field, columns):
 
 def load_apb_dataset_from_db(db, uid, hdr=None):
     logger= get_logger()
+    _t0 = ttime.perf_counter()
     if hdr is None:
         hdr = db[uid]
+    print(f'  [timing] db[uid]: {ttime.perf_counter()-_t0:.3f}s'); _t = ttime.perf_counter()
     start = dict(hdr.start)
+    print(f'  [timing] hdr.start: {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
     logger.info(f'({ttime.ctime()}) Retrieving pizzabox data... ')
-    # Navigate to apb_stream data node once — avoids re-traversing the Tiled
-    # node tree for the second field read (pb9_enc1 uses its own node below).
     apb_node = _get_stream_data_node(hdr, 'apb_stream')
+    print(f'  [timing] _get_stream_data_node(apb_stream): {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
     apb_dataset = _read_records_from_node(
         apb_node, hdr, 'apb_stream', 'apb_stream',
         ['timestamp', 'i0', 'it', 'ir', 'iff', 'aux1', 'aux2', 'aux3', 'aux4']
     ).astype('float64')
+    print(f'  [timing] read apb_stream data: {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
     logger.info(f'({ttime.ctime()}) Pizzabox data extracted from DB')
-    #to fix the padding
-    # looking for teh first negative number in difference dataset
-    # apb_dataset = apb_dataset[apb_dataset['timestamp'] > 1]   Lame attempt to clean up padding
     dataset_diff  = np.diff(apb_dataset['timestamp'])
-
-    # array_of_zero_index = np.where(dataset_diff < 0)[0]
     array_of_zero_index = np.where(dataset_diff < -0.01)[0]
-    # scan uid = 'ed77df59-48cf-44ed-b09d-861a11d5e4b7'
-    # In [32]: apb_dataset['timestamp'][647]
-    # Out[32]: 1782911883.0031967
-    #
-    # In [33]: apb_dataset['timestamp'][648]
-    # Out[33]: 1782911883.0083911
-    #
-    # In [34]: apb_dataset['timestamp'][649]
-    # Out[34]: 1782911883.005197 What is going on why recoded timestamp goes backward
-
     if array_of_zero_index.size == 0:
         padding_index = len(dataset_diff)
     else:
         padding_index = array_of_zero_index[0]
     apb_dataset = apb_dataset[0:padding_index]
-
+    print(f'  [timing] padding strip: {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
     logger.info(f'({ttime.ctime()}) Pizzabox data processed.')
 
     logger.info(f'({ttime.ctime()}) Retrieving encoder data... ')
     enc_node = _get_stream_data_node(hdr, 'pb9_enc1')
+    print(f'  [timing] _get_stream_data_node(pb9_enc1): {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
     energy_dataset = _read_records_from_node(
         enc_node, hdr, 'pb9_enc1', 'pb9_enc1',
         ['ts_s', 'ts_ns', 'encoder', 'index', 'state']
     )
+    print(f'  [timing] read pb9_enc1 data: {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
     logger.info(f'({ttime.ctime()}) Encoder data received.')
     angle_offset = -float(start['angle_offset'])
 
     energy_dataset = energy_dataset[energy_dataset['ts_s'] > 1]
+    print(f'  [timing] filter ts_s>1: {ttime.perf_counter()-_t:.3f}s'); _t = ttime.perf_counter()
 
-    ch_offsets = get_ch_properties(start, 'ch', '_offset')*1e3 #offsets are ib mV but the readings are in uV
+    ch_offsets = get_ch_properties(start, 'ch', '_offset')*1e3
     ch_gains = get_ch_properties(start, 'ch', '_amp_gain')
 
     apb_dataset.iloc[:, 1:] -= ch_offsets
     apb_dataset.iloc[:, 1:] /= 1e6
     apb_dataset.iloc[:, 1:] /= (10**ch_gains)
+    print(f'  [timing] gain/offset correction: {ttime.perf_counter()-_t:.3f}s')
+    print(f'  [timing] load_apb_dataset_from_db total: {ttime.perf_counter()-_t0:.3f}s')
 
     return apb_dataset, energy_dataset, angle_offset
 

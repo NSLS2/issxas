@@ -150,12 +150,16 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     data_kind = 'default'
     file_list = []
     logger.info(f'({ttime.ctime()}) Processing started for {uid}/{path_to_file}')
+    _proc_t0 = ttime.perf_counter()
     if experiment == 'fly_scan':
         logger.info(f'({ttime.ctime()}) Processing fly scan')
         try:
             # default detectors — pass hdr so callee skips its own db[uid] call
+            print(f'[timing] load_apb_dataset_from_db start')
             apb_df, energy_df, energy_offset = load_apb_dataset_from_db(db, uid, hdr=hdr)
+            _t = ttime.perf_counter()
             raw_dict = translate_apb_dataset(apb_df, energy_df, energy_offset)
+            print(f'[timing] translate_apb_dataset: {ttime.perf_counter()-_t:.3f}s')
             logger.info(f'({ttime.ctime()}) Pizzabox and monochromator data processed')
             for stream_name in stream_names:
                 if (stream_name == 'pil100k_stream') or (stream_name == 'pil100k2_stream'):
@@ -187,30 +191,33 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
                     raw_dict = {**raw_dict, **xia_dict}
                     pass #WIP for flying Ge detrctor
 
+            print(f'[timing] streams loaded total: {ttime.perf_counter()-_proc_t0:.3f}s')
             logger.info(f'({ttime.ctime()}) Streams loaded successfully')
         except Exception as e:
             logger.info(f'({ttime.ctime()}) Loading streams failed')
             raise e
-        #raise RuntimeError()
         try:
-            # print(raw_dict)
+            _t = ttime.perf_counter()
             if load_images:
                 interpolated_df = interpolate_with_interp(raw_dict)
             else:
                 interpolated_df = interpolate(raw_dict)
-
+            print(f'[timing] interpolate: {ttime.perf_counter()-_t:.3f}s')
             logger.info(f'({ttime.ctime()}) Interpolation successful for {path_to_file}')
             if save_interpolated_file:
+                _t = ttime.perf_counter()
                 save_interpolated_df_as_file(path_to_file, interpolated_df, comments)
+                print(f'[timing] save_interpolated_df: {ttime.perf_counter()-_t:.3f}s')
         except Exception as e:
             logger.info(f'({ttime.ctime()}) Interpolation failed for {path_to_file}')
             raise e
 
         try:
             if e0 > 0:
-                # rebin_kwargs = filter_rebin_kwargs(processing_kwargs)
                 rebin_kwargs = {}
+                _t = ttime.perf_counter()
                 processed_df = rebin(interpolated_df, e0, **rebin_kwargs, skip_binning=start['radiation_damage_scan'], radiation_damage_scan=start['radiation_damage_scan'])
+                print(f'[timing] rebin: {ttime.perf_counter()-_t:.3f}s')
                 (path, extension) = os.path.splitext(path_to_file)
                 path_to_file = path + '.dat'
                 logger.info(f'({ttime.ctime()}) Binning successful for {path_to_file}')
