@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from . import xray
+from concurrent.futures import ThreadPoolExecutor
 from itertools import product
 from copy import deepcopy
 from xas.xas_logger import get_logger
@@ -36,9 +37,13 @@ def _read_tiled_records(hdr, stream_name, field, columns):
 def load_apb_dataset_from_db(db, uid):
     logger= get_logger()
     hdr = db[uid]
-    logger.info(f'({ttime.ctime()}) Retrieving pizzabox data... ')
-    apb_dataset = _read_tiled_records(hdr, 'apb_stream', 'apb_stream',
-                                      ['timestamp', 'i0', 'it', 'ir', 'iff', 'aux1', 'aux2', 'aux3', 'aux4']).astype('float64')
+    # Fetch the encoder data in the background while the pizzabox data loads.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        energy_future = pool.submit(_read_tiled_records, hdr, 'pb9_enc1', 'pb9_enc1',
+                                    ['ts_s', 'ts_ns', 'encoder', 'index', 'state'])
+        logger.info(f'({ttime.ctime()}) Retrieving pizzabox data... ')
+        apb_dataset = _read_tiled_records(hdr, 'apb_stream', 'apb_stream',
+                                          ['timestamp', 'i0', 'it', 'ir', 'iff', 'aux1', 'aux2', 'aux3', 'aux4']).astype('float64')
     logger.info(f'({ttime.ctime()}) Pizzabox data extracted from DB')
     #to fix the padding
     # looking for teh first negative number in difference dataset
@@ -68,8 +73,7 @@ def load_apb_dataset_from_db(db, uid):
 
     logger.info(f'({ttime.ctime()}) Retrieving encoder data... ')
     # apb_dataset = list(hdr.data(stream_name='apb_stream', field='apb_stream'))[0]
-    energy_dataset = _read_tiled_records(hdr, 'pb9_enc1', 'pb9_enc1',
-                                         ['ts_s', 'ts_ns', 'encoder', 'index', 'state'])
+    energy_dataset = energy_future.result()
     logger.info(f'({ttime.ctime()}) Encoder data received.')
     angle_offset = -float(hdr['start']['angle_offset'])
 

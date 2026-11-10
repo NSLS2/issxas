@@ -127,6 +127,7 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
 
         # logger = get_logger(print_func=print_func)
     hdr = db[uid]
+    run_db = {uid: hdr}  # loaders only call db[uid]: reuse this lookup instead of repeating it
     if update_start is not None:
         hdr = update_header_start(hdr, update_start)
     experiment = hdr.start['experiment']
@@ -145,10 +146,11 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     logger.info(f'({ttime.ctime()}) Processing started for {uid}/{path_to_file}')
     if experiment == 'fly_scan':
         logger.info(f'({ttime.ctime()}) Processing fly scan')
-        stream_names = hdr.stream_names
+        # The stop document lists the streams; listing them from the server costs 3 requests.
+        stream_names = sorted((hdr.stop or {}).get('num_events') or {}) or hdr.stream_names
         try:
             # default detectors
-            apb_df, energy_df, energy_offset = load_apb_dataset_from_db(db, uid)
+            apb_df, energy_df, energy_offset = load_apb_dataset_from_db(run_db, uid)
             raw_dict = translate_apb_dataset(apb_df, energy_df, energy_offset)
             logger.info(f'({ttime.ctime()}) Pizzabox and monochromator data processed')
             for stream_name in stream_names:
@@ -158,24 +160,24 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
                     pil100k_name = stream_name.split('_')[0]
                     apb_trigger_stream_name = f'apb_trigger_{pil100k_name}'
 
-                    apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(db, uid, use_fall=True,
+                    apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(run_db, uid, use_fall=True,
                                                                                    stream_name=apb_trigger_stream_name)
                     logger.info(f'({ttime.ctime()}) Trigger data received')
                     logger.info(f'({ttime.ctime()}) Retrieving Pilatus data...')
-                    pil100k_dict = load_pil100k_dataset_from_db(db, uid, apb_trigger_pil100k_timestamps,
+                    pil100k_dict = load_pil100k_dataset_from_db(run_db, uid, apb_trigger_pil100k_timestamps,
                                                                 pil100k_stream_name=pil100k_stream_name,
                                                                 load_images=load_images)
                     logger.info(f'({ttime.ctime()}) Pilatus data received')
                     raw_dict = {**raw_dict, **pil100k_dict}
 
                 elif stream_name == 'xs_stream':
-                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs')
-                    xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps)
+                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(run_db, uid, stream_name='apb_trigger_xs')
+                    xs3_dict = load_xs3_dataset_from_db(run_db, uid, apb_trigger_xs_timestamps)
                     logger.info(f'({ttime.ctime()}) SDD data received')
                     raw_dict = {**raw_dict, **xs3_dict}
                 elif stream_name == 'ge_detector_stream':
-                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_ge_detector')
-                    xia_dict = load_xia_dataset_from_db(db, uid, apb_trigger_xia_timestamps)
+                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(run_db, uid, stream_name='apb_trigger_ge_detector')
+                    xia_dict = load_xia_dataset_from_db(run_db, uid, apb_trigger_xia_timestamps)
                     logger.info(f'({ttime.ctime()}) XIA data received')
                     raw_dict = {**raw_dict, **xia_dict}
                     pass #WIP for flying Ge detrctor
