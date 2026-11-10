@@ -12,12 +12,12 @@ def _read_tiled_field(hdr, stream_name, field):
     """Read one field independently, retaining support for older Broker headers."""
     if hasattr(hdr, 'v2'):
         try:
-            # SQL-backed runs: the v3 client opens '<stream>/<field>' in one request,
+            # SQL-backed runs: the v3 client opens run[stream, field] in one request,
             # vs ~7 for the v2 compatibility view's run[stream]['data'][field].
             run = hdr.v2.v3
         except (AttributeError, NotImplementedError):  # MongoDB-backed runs, test doubles
             return np.asarray(hdr.v2[stream_name]['data'][field].read())
-        return np.asarray(run[f'{stream_name}/{field}'].read())
+        return np.asarray(run[stream_name, field].read())
     values = list(hdr.data(stream_name=stream_name, field=field))
     if len(values) == 1:
         value = values[0]
