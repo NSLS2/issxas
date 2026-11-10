@@ -7,22 +7,31 @@ from xas.xas_logger import get_logger
 import time as ttime
 
 
+def _read_tiled_field_direct(run, stream_name, field):
+    """Read <run>/<stream>/<field> in one request; traversing the tree costs ~7.
+
+    Returns None if the path does not exist (layouts that nest fields under 'data').
+    """
+    from tiled.client.constructors import from_context
+    from tiled.client.utils import ClientError
+    try:
+        node = from_context(run.context, structure_clients=run.structure_clients,
+                            node_path_parts=[*run.path_parts, stream_name, field])
+    except ClientError as err:
+        if err.response.status_code == 404:
+            return None
+        raise
+    return np.asarray(node.read())
+
+
 def _read_tiled_field(hdr, stream_name, field):
     """Read one field independently, retaining support for older Broker headers."""
     if hasattr(hdr, 'v2'):
-        run = hdr.v2
-        if hasattr(run, 'context'):
-            # Open <run>/<stream>/<field> in one request; traversing the tree costs ~7.
-            from tiled.client.constructors import from_context
-            from tiled.client.utils import ClientError
-            try:
-                node = from_context(run.context, structure_clients=run.structure_clients,
-                                    node_path_parts=[*run.path_parts, stream_name, field])
-                return np.asarray(node.read())
-            except ClientError as err:
-                if err.response.status_code != 404:  # 404: layout nests fields under 'data'
-                    raise
-        return np.asarray(run[stream_name]['data'][field].read())
+        if hasattr(hdr.v2, 'context'):
+            values = _read_tiled_field_direct(hdr.v2, stream_name, field)
+            if values is not None:
+                return values
+        return np.asarray(hdr.v2[stream_name]['data'][field].read())
     values = list(hdr.data(stream_name=stream_name, field=field))
     if len(values) == 1:
         value = values[0]
