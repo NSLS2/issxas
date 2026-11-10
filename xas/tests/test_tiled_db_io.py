@@ -94,3 +94,40 @@ def test_tiled_and_legacy_trigger_results_match():
     expected = db_io.load_apb_trig_dataset_from_db({'uid': LegacyHeader()}, 'uid')
     actual = db_io.load_apb_trig_dataset_from_db({'uid': tiled}, 'uid')
     np.testing.assert_array_equal(actual, expected)
+
+
+class FakeRun(dict):
+    """Tiled-like run: exposes context/path_parts, so the direct-path read applies."""
+    context = object()
+    path_parts = ['iss', 'migration', 'uid']
+    structure_clients = None
+
+
+def test_tiled_field_read_uses_direct_path(monkeypatch):
+    import tiled.client.constructors as constructors
+    calls = []
+
+    def from_context(context, structure_clients, node_path_parts):
+        calls.append(node_path_parts)
+        return Field(np.array([1, 2, 3]))
+
+    monkeypatch.setattr(constructors, 'from_context', from_context)
+    run = FakeRun()  # empty: traversal would raise KeyError
+    hdr = type('Hdr', (), {'v2': run})()
+    np.testing.assert_array_equal(db_io._read_tiled_field(hdr, 'apb_stream', 'apb_stream'), [1, 2, 3])
+    assert calls == [['iss', 'migration', 'uid', 'apb_stream', 'apb_stream']]
+
+
+def test_tiled_field_read_falls_back_on_404(monkeypatch):
+    import tiled.client.constructors as constructors
+    from tiled.client import utils
+    http = utils.httpx  # httpx or httpx2, whichever this tiled version uses
+
+    def from_context(context, structure_clients, node_path_parts):
+        request = http.Request('GET', 'https://example.com')
+        raise utils.ClientError('not found', request, http.Response(404, request=request))
+
+    monkeypatch.setattr(constructors, 'from_context', from_context)
+    run = FakeRun(apb_stream={'data': {'apb_stream': Field(np.array([4, 5]))}})
+    hdr = type('Hdr', (), {'v2': run})()
+    np.testing.assert_array_equal(db_io._read_tiled_field(hdr, 'apb_stream', 'apb_stream'), [4, 5])
