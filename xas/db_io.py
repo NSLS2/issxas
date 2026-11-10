@@ -7,42 +7,22 @@ from xas.xas_logger import get_logger
 import time as ttime
 
 
-def _direct_tiled_node(run, stream_name, field):
-    """Open ``<run>/<stream_name>/<field>`` with a single metadata request.
-
-    Indexing ``run[stream_name]['data'][field]`` walks the tree one level at a
-    time and costs ~7 HTTP round-trips per field (stream metadata, internal
-    table, repeated stream listings, field metadata). On the central Tiled
-    server each of those takes ~0.5-1 s, which made post-scan processing ~4x
-    slower than the pre-Tiled file-based path. Jumping straight to the array
-    by its full path costs one metadata request before the data read.
-
-    Returns None when the shortcut does not apply (non-Tiled run objects, or a
-    catalog whose layout does not expose fields at ``<stream>/<field>``), so
-    the caller can fall back to tree traversal.
-    """
-    context = getattr(run, 'context', None)
-    path_parts = getattr(run, 'path_parts', None)
-    if context is None or path_parts is None:
-        return None
-    from tiled.client.constructors import from_context
-    from tiled.client.utils import ClientError
-    try:
-        return from_context(context, structure_clients=run.structure_clients,
-                            node_path_parts=[*path_parts, stream_name, field])
-    except ClientError as err:
-        if err.response.status_code == 404:
-            return None
-        raise
-
-
 def _read_tiled_field(hdr, stream_name, field):
     """Read one field independently, retaining support for older Broker headers."""
     if hasattr(hdr, 'v2'):
-        node = _direct_tiled_node(hdr.v2, stream_name, field)
-        if node is None:
-            node = hdr.v2[stream_name]['data'][field]
-        return np.asarray(node.read())
+        run = hdr.v2
+        if hasattr(run, 'context'):
+            # Open <run>/<stream>/<field> in one request; traversing the tree costs ~7.
+            from tiled.client.constructors import from_context
+            from tiled.client.utils import ClientError
+            try:
+                node = from_context(run.context, structure_clients=run.structure_clients,
+                                    node_path_parts=[*run.path_parts, stream_name, field])
+                return np.asarray(node.read())
+            except ClientError as err:
+                if err.response.status_code != 404:  # 404: layout nests fields under 'data'
+                    raise
+        return np.asarray(run[stream_name]['data'][field].read())
     values = list(hdr.data(stream_name=stream_name, field=field))
     if len(values) == 1:
         value = values[0]
