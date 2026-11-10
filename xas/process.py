@@ -28,11 +28,13 @@ import gc
 
 def process_interpolate_bin(doc, db, processing_repo='xas', draw_func_interp = None, draw_func_bin = None, cloud_dispatcher = None,
                             print_func=None, dump_to_tiff=False, load_images=False, processing_kwargs=None,
-                            save_image = False, camera1 = None, camera2 = None):
+                            save_image = False, camera1 = None, camera2 = None, hdr=None):
     logger = get_logger()
     logger.info(f'({ttime.ctime()}) Processing has begun -----------------------------------------------')
+    if hdr is None:  # callers that already resolved the run can pass it to skip the lookups
+        hdr = db[doc['run_start']]
 
-    if 'experiment' in db[doc['run_start']].start.keys():
+    if 'experiment' in hdr.start.keys():
         uid = doc['run_start']
         print(f"processing {uid} in using repo {processing_repo}")
         if processing_repo == 'xas':
@@ -40,7 +42,7 @@ def process_interpolate_bin(doc, db, processing_repo='xas', draw_func_interp = N
                                              cloud_dispatcher=cloud_dispatcher, print_func=print_func,
                                              dump_to_tiff=dump_to_tiff, load_images=load_images,
                                              save_image = save_image, camera1= camera1,camera2=camera2,
-                                             processing_kwargs=processing_kwargs)
+                                             processing_kwargs=processing_kwargs, hdr=hdr)
     logger.info(f'({ttime.ctime()}) Processing has finished -----------------------------------------------')
 
 
@@ -49,7 +51,7 @@ def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func
                                      print_func=None, dump_to_tiff=False, load_images=False,
                                      save_interpolated_file=True, update_start=None,
                                      save_image = False, camera1=None,       camera2=None,
-                                     processing_kwargs=None):
+                                     processing_kwargs=None, hdr=None):
 
     logger = get_logger()
     hdr, primary_df, extended_data, comments, path_to_file, file_list, data_kind = get_processed_df_from_uid(uid, db,
@@ -60,7 +62,8 @@ def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func
                                                                           save_interpolated_file=save_interpolated_file,
                                                                           update_start=update_start,
                                                                           load_images=load_images,
-                                                                          processing_kwargs=processing_kwargs)
+                                                                          processing_kwargs=processing_kwargs,
+                                                                          hdr=hdr)
     #save images
     if save_image:
         try:
@@ -118,7 +121,8 @@ _legacy_experiment_reg = {'fly_energy_scan_pil100k' : 'fly_scan'}
 
 def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_func_bin = None,
                               print_func=None, save_interpolated_file=True,
-                              update_start=None, return_processed_df=False, load_images=False, processing_kwargs=None):
+                              update_start=None, return_processed_df=False, load_images=False, processing_kwargs=None,
+                              hdr=None):
 
     if print_func is None:
         print_func = print
@@ -126,7 +130,9 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
         logger = get_logger()
 
         # logger = get_logger(print_func=print_func)
-    hdr = db[uid]
+    if hdr is None:
+        hdr = db[uid]
+    run_db = {uid: hdr}  # loaders only call db[uid]: reuse this lookup instead of repeating it
     if update_start is not None:
         hdr = update_header_start(hdr, update_start)
     experiment = hdr.start['experiment']
@@ -145,10 +151,11 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
     logger.info(f'({ttime.ctime()}) Processing started for {uid}/{path_to_file}')
     if experiment == 'fly_scan':
         logger.info(f'({ttime.ctime()}) Processing fly scan')
-        stream_names = hdr.stream_names
+        # The stop document lists the streams; listing them from the server costs 3 requests.
+        stream_names = sorted((hdr.stop or {}).get('num_events') or {}) or hdr.stream_names
         try:
             # default detectors
-            apb_df, energy_df, energy_offset = load_apb_dataset_from_db(db, uid)
+            apb_df, energy_df, energy_offset = load_apb_dataset_from_db(run_db, uid)
             raw_dict = translate_apb_dataset(apb_df, energy_df, energy_offset)
             logger.info(f'({ttime.ctime()}) Pizzabox and monochromator data processed')
             for stream_name in stream_names:
@@ -158,24 +165,24 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
                     pil100k_name = stream_name.split('_')[0]
                     apb_trigger_stream_name = f'apb_trigger_{pil100k_name}'
 
-                    apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(db, uid, use_fall=True,
+                    apb_trigger_pil100k_timestamps = load_apb_trig_dataset_from_db(run_db, uid, use_fall=True,
                                                                                    stream_name=apb_trigger_stream_name)
                     logger.info(f'({ttime.ctime()}) Trigger data received')
                     logger.info(f'({ttime.ctime()}) Retrieving Pilatus data...')
-                    pil100k_dict = load_pil100k_dataset_from_db(db, uid, apb_trigger_pil100k_timestamps,
+                    pil100k_dict = load_pil100k_dataset_from_db(run_db, uid, apb_trigger_pil100k_timestamps,
                                                                 pil100k_stream_name=pil100k_stream_name,
                                                                 load_images=load_images)
                     logger.info(f'({ttime.ctime()}) Pilatus data received')
                     raw_dict = {**raw_dict, **pil100k_dict}
 
                 elif stream_name == 'xs_stream':
-                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_xs')
-                    xs3_dict = load_xs3_dataset_from_db(db, uid, apb_trigger_xs_timestamps)
+                    apb_trigger_xs_timestamps = load_apb_trig_dataset_from_db(run_db, uid, stream_name='apb_trigger_xs')
+                    xs3_dict = load_xs3_dataset_from_db(run_db, uid, apb_trigger_xs_timestamps)
                     logger.info(f'({ttime.ctime()}) SDD data received')
                     raw_dict = {**raw_dict, **xs3_dict}
                 elif stream_name == 'ge_detector_stream':
-                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(db, uid, stream_name='apb_trigger_ge_detector')
-                    xia_dict = load_xia_dataset_from_db(db, uid, apb_trigger_xia_timestamps)
+                    apb_trigger_xia_timestamps = load_apb_trig_dataset_from_db(run_db, uid, stream_name='apb_trigger_ge_detector')
+                    xia_dict = load_xia_dataset_from_db(run_db, uid, apb_trigger_xia_timestamps)
                     logger.info(f'({ttime.ctime()}) XIA data received')
                     raw_dict = {**raw_dict, **xia_dict}
                     pass #WIP for flying Ge detrctor
