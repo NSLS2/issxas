@@ -28,11 +28,13 @@ import gc
 
 def process_interpolate_bin(doc, db, processing_repo='xas', draw_func_interp = None, draw_func_bin = None, cloud_dispatcher = None,
                             print_func=None, dump_to_tiff=False, load_images=False, processing_kwargs=None,
-                            save_image = False, camera1 = None, camera2 = None):
+                            save_image = False, camera1 = None, camera2 = None, hdr=None):
     logger = get_logger()
     logger.info(f'({ttime.ctime()}) Processing has begun -----------------------------------------------')
+    if hdr is None:  # callers that already resolved the run can pass it to skip the lookups
+        hdr = db[doc['run_start']]
 
-    if 'experiment' in db[doc['run_start']].start.keys():
+    if 'experiment' in hdr.start.keys():
         uid = doc['run_start']
         print(f"processing {uid} in using repo {processing_repo}")
         if processing_repo == 'xas':
@@ -40,7 +42,7 @@ def process_interpolate_bin(doc, db, processing_repo='xas', draw_func_interp = N
                                              cloud_dispatcher=cloud_dispatcher, print_func=print_func,
                                              dump_to_tiff=dump_to_tiff, load_images=load_images,
                                              save_image = save_image, camera1= camera1,camera2=camera2,
-                                             processing_kwargs=processing_kwargs)
+                                             processing_kwargs=processing_kwargs, hdr=hdr)
     logger.info(f'({ttime.ctime()}) Processing has finished -----------------------------------------------')
 
 
@@ -49,7 +51,7 @@ def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func
                                      print_func=None, dump_to_tiff=False, load_images=False,
                                      save_interpolated_file=True, update_start=None,
                                      save_image = False, camera1=None,       camera2=None,
-                                     processing_kwargs=None):
+                                     processing_kwargs=None, hdr=None):
 
     logger = get_logger()
     hdr, primary_df, extended_data, comments, path_to_file, file_list, data_kind = get_processed_df_from_uid(uid, db,
@@ -60,7 +62,8 @@ def process_interpolate_bin_from_uid(uid, db, draw_func_interp = None, draw_func
                                                                           save_interpolated_file=save_interpolated_file,
                                                                           update_start=update_start,
                                                                           load_images=load_images,
-                                                                          processing_kwargs=processing_kwargs)
+                                                                          processing_kwargs=processing_kwargs,
+                                                                          hdr=hdr)
     #save images
     if save_image:
         try:
@@ -118,7 +121,8 @@ _legacy_experiment_reg = {'fly_energy_scan_pil100k' : 'fly_scan'}
 
 def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_func_bin = None,
                               print_func=None, save_interpolated_file=True,
-                              update_start=None, return_processed_df=False, load_images=False, processing_kwargs=None):
+                              update_start=None, return_processed_df=False, load_images=False, processing_kwargs=None,
+                              hdr=None):
 
     if print_func is None:
         print_func = print
@@ -126,7 +130,8 @@ def get_processed_df_from_uid(uid, db, logger=None, draw_func_interp=None, draw_
         logger = get_logger()
 
         # logger = get_logger(print_func=print_func)
-    hdr = db[uid]
+    if hdr is None:
+        hdr = db[uid]
     run_db = {uid: hdr}  # loaders only call db[uid]: reuse this lookup instead of repeating it
     if update_start is not None:
         hdr = update_header_start(hdr, update_start)
